@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="color-scheme" content="dark" />
+<title>YO'LDA — Ofis paneli</title>
+<style>
+  :root { box-sizing: border-box; padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+  html { height: 100%; scroll-padding-top: env(safe-area-inset-top, 0px); }
+  * { box-sizing: border-box; }
+  body { margin: 0; height: 100%; background: #14171A; color: #ECEDEE; font-family: Inter, system-ui, -apple-system, sans-serif; -webkit-tap-highlight-color: transparent; }
+  #root { min-height: 100%; }
+  input, button { font-family: inherit; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.25.6/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script type="text/babel" data-presets="react">
+const { useState, useEffect } = React;
+
+const SUPABASE_URL = "https://orflkpzbmluqfrebdaho.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9yZmxrcHpibWx1cWZyZWJkYWhvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE2NjQyMTgsImV4cCI6MjEwNzI0MDIxOH0.wng5OwkrEbeDKNv6-RP6ypXe9hIaBvnNevkvLno1wh8";
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+const COLORS = { bg: "#14171A", panel: "#1D2126", panel2: "#232830", border: "#2B3138", amber: "#F5A623", green: "#3CE07A", red: "#FF5C5C", text: "#ECEDEE", muted: "#828A93" };
+function num(v) { const n = parseFloat(v); return isNaN(n) ? 0 : n; }
+function fmt(n, d = 0) { return (Math.round(n * 10 ** d) / 10 ** d).toLocaleString("ru-RU"); }
+function fmtDate(ts) { return new Date(ts).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }); }
+function photoUrl(p) { return typeof p === "string" ? p : p?.url; }
+function photoComment(p) { return typeof p === "string" ? "" : (p?.comment || ""); }
+const FONT_IMPORT = `@import url('https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Roboto+Mono:wght@500;700&family=Inter:wght@400;500;600&display=swap');`;
+
+function Icon({ size = 20, color = "currentColor", children }) { return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{children}</svg>; }
+const Truck = (p) => <Icon {...p}><rect x="1" y="6" width="13" height="11"/><path d="M14 9h4l3 3v5h-7z"/><circle cx="6" cy="19" r="1.7"/><circle cx="17.5" cy="19" r="1.7"/></Icon>;
+const ChevronLeft = (p) => <Icon {...p}><path d="M15 18l-6-6 6-6"/></Icon>;
+const ChevronRight = (p) => <Icon {...p}><path d="M9 18l6-6-6-6"/></Icon>;
+const Search = (p) => <Icon {...p}><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></Icon>;
+const AlertTriangle = (p) => <Icon {...p}><path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></Icon>;
+const Clock = (p) => <Icon {...p}><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></Icon>;
+const Lock = (p) => <Icon {...p}><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></Icon>;
+
+function Panel({ children, style }) { return <div style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 16, ...style }}>{children}</div>; }
+function SegmentedChoice({ options, value, onChange }) {
+  return (<div style={{ display: "flex", gap: 8 }}>{options.map((o) => (
+    <button key={o.id} onClick={() => onChange(o.id)} style={{ flex: 1, padding: "10px 0", borderRadius: 8, border: `1px solid ${value === o.id ? COLORS.amber : COLORS.border}`, background: value === o.id ? COLORS.amber + "1A" : COLORS.panel2, color: value === o.id ? COLORS.amber : COLORS.text, fontWeight: 600, fontSize: 13, cursor: "pointer", fontFamily: "Inter" }}>{o.label}</button>
+  ))}</div>);
+}
+function Readout({ label, value, unit, tone = "green" }) {
+  const c = tone === "green" ? COLORS.green : tone === "red" ? COLORS.red : COLORS.amber;
+  return (<div style={{ display: "flex", flexDirection: "column", gap: 2 }}><span style={{ fontFamily: "Inter", fontSize: 11, color: COLORS.muted, letterSpacing: 0.4, textTransform: "uppercase" }}>{label}</span><div style={{ fontFamily: "'Roboto Mono', monospace", fontWeight: 700, fontSize: 20, color: c }}>{value}{unit && <span style={{ fontSize: 11, color: COLORS.muted, marginLeft: 5, fontFamily: "Inter" }}>{unit}</span>}</div></div>);
+}
+function PhotoGroup({ label, photos }) {
+  if (!photos || photos.length === 0) return null;
+  return (<div style={{ display: "flex", flexDirection: "column", gap: 4 }}>{label && <span style={{ fontSize: 9.5, color: COLORS.muted }}>{label}</span>}<div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>{photos.map((p, i) => { const url = photoUrl(p), comment = photoComment(p); return (
+    <div key={i} style={{ display: "flex", flexDirection: "column", gap: 3, width: 48 }}><img src={url} alt="" onClick={() => window.open(url, "_blank")} style={{ width: 48, height: 48, objectFit: "cover", borderRadius: 6, cursor: "pointer" }} />{comment && <span style={{ fontSize: 8.5, color: COLORS.muted, fontStyle: "italic", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={comment}>{comment}</span>}</div>
+  ); })}</div></div>);
+}
+function PhotoGroupRow({ ev }) {
+  return (<>
+    {ev.photos && ev.photos.length > 0 && <div style={{ marginTop: 8 }}><PhotoGroup photos={ev.photos} /></div>}
+    {(ev.tractorDieselPhotos?.length > 0 || ev.trailerDieselPhotos?.length > 0 || ev.adBluePhotos?.length > 0 || ev.motoChasPhoto) && (
+      <div style={{ display: "flex", gap: 16, marginTop: 8, flexWrap: "wrap" }}>
+        <PhotoGroup label="Tyagach cheki" photos={ev.tractorDieselPhotos} />
+        <PhotoGroup label="Prisep cheki" photos={ev.trailerDieselPhotos} />
+        <PhotoGroup label="AdBlue cheki" photos={ev.adBluePhotos} />
+        <PhotoGroup label="Motochas rasmi" photos={ev.motoChasPhoto ? [ev.motoChasPhoto] : []} />
+      </div>
+    )}
+  </>);
+}
+const FIELD_LABELS = { address: "Manzil", km: "Km", newKm: "Km", distance: "Masofa", tractorLiters: "Tyagach diesel", trailerLiters: "Prisep diesel", adBlue: "AdBlue", motoChas: "Motochas", motoChasWorked: "Ishlagan soat", loadStatus: "Yuk holati", newTractorNumber: "Yangi tyagach", newTrailerNumber: "Yangi prisep" };
+const LOAD_LABELS = { S_GRUZ: "S GRUZ", BEZ_GRUZ: "BEZ GRUZ" };
+function EventDetail({ label, ev, fields, standalonePanel }) {
+  const rows = fields.filter((f) => ev[f] !== undefined && ev[f] !== null && ev[f] !== "");
+  const content = (
+    <>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+        <span style={{ fontFamily: "Oswald", fontSize: 13, fontWeight: 600, color: COLORS.amber }}>{label}</span>
+        <span style={{ fontSize: 10.5, color: COLORS.muted }}>{fmtDate(ev.at)}</span>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+        {rows.map((f) => <div key={f} style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}><span style={{ color: COLORS.muted }}>{FIELD_LABELS[f]}</span><span style={{ fontFamily: "'Roboto Mono', monospace", fontWeight: 600 }}>{f === "loadStatus" ? LOAD_LABELS[ev[f]] : f === "km" || f === "distance" || f === "newKm" ? `${fmt(ev[f])} km` : f === "motoChas" || f === "motoChasWorked" ? `${fmt(ev[f])} soat` : f.toLowerCase().includes("liters") || f === "adBlue" ? `${fmt(ev[f])} l` : ev[f]}</span></div>)}
+      </div>
+      <PhotoGroupRow ev={ev} />
+    </>
+  );
+  return standalonePanel ? <Panel>{content}</Panel> : <div style={{ background: COLORS.panel2, borderRadius: 8, padding: 12 }}>{content}</div>;
+}
+
+// ---------------- Hosila hisob (haydovchi ilovasidagi bilan bir xil mantiq) ----------------
+function deriveTrip(trip) {
+  let km = trip.startKm, motoChas = trip.startMotoChas;
+  let tractorStartKm = trip.startKm, trailerStartMotoChas = trip.startMotoChas;
+  let curTractor = trip.tractorNumber, curTrailer = trip.trailerNumber;
+  const history = [];
+  for (const ev of trip.history) {
+    const item = { ...ev };
+    switch (ev.type) {
+      case "zagruzka": case "zapravka": { item.distance = num(ev.km) - km; km = num(ev.km); break; }
+      case "vigruzka": { item.distance = num(ev.km) - km; km = num(ev.km); item.motoChasWorked = num(ev.motoChas) - motoChas; motoChas = num(ev.motoChas); break; }
+      case "tractor_end": { item.distance = num(ev.km) - km; km = num(ev.km); break; }
+      case "tractor_confirmed": { km = num(ev.newKm); tractorStartKm = km; curTractor = ev.newTractorNumber; break; }
+      case "trailer_end": { item.distance = num(ev.km) - km; km = num(ev.km); curTrailer = null; break; }
+      case "trailer_confirmed": { motoChas = num(ev.motoChas); trailerStartMotoChas = motoChas; curTrailer = ev.newTrailerNumber; break; }
+      default: break;
+    }
+    history.push(item);
+  }
+  return { history, lastKm: km, lastMotoChas: motoChas, currentTractorStartKm: tractorStartKm, currentTrailerStartMotoChas: trailerStartMotoChas, tractorNumber: curTractor, trailerNumber: curTrailer };
+}
+const CHANGE_LABELS = { tractor_end: "Tyagach yakunlandi", tractor_accepted: "Yangi tyagach qabul qilindi", tractor_confirmed: "Tyagach almashinuvi tasdiqlandi", trailer_end: "Prisep yakunlandi", trailer_accepted: "Yangi prisep qabul qilindi", trailer_confirmed: "Prisep almashinuvi tasdiqlandi" };
+function dayKeyOf(ts) { const d = new Date(ts); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
+function computeFiles(history) {
+  const days = []; const byKey = {};
+  history.forEach((ev) => {
+    if (!["zagruzka", "zapravka", "vigruzka"].includes(ev.type)) return;
+    const key = dayKeyOf(ev.at);
+    if (!byKey[key]) { byKey[key] = { dayKey: key, dayLabel: new Date(ev.at).toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit", year: "numeric" }), zagruzkas: [], zapravkas: [], vigruzkas: [] }; days.push(byKey[key]); }
+    if (ev.type === "zagruzka") byKey[key].zagruzkas.push(ev);
+    if (ev.type === "zapravka") byKey[key].zapravkas.push(ev);
+    if (ev.type === "vigruzka") byKey[key].vigruzkas.push(ev);
+  });
+  return days;
+}
+function rowToEvent(row) { return { id: row.id, type: row.type, at: new Date(row.at).getTime(), batchId: row.batch_id || null, ...row.data }; }
+async function fetchTripFull(tripId) {
+  const { data: tripRow } = await sb.from("trips").select("*, driver:drivers(first_name,last_name)").eq("id", tripId).single();
+  if (!tripRow) return null;
+  const { data: eventRows } = await sb.from("trip_events").select("*").eq("trip_id", tripId).order("at", { ascending: true });
+  const { data: sendRows } = await sb.from("trip_sends").select("*").eq("trip_id", tripId).order("batch_number", { ascending: true });
+  return {
+    id: tripRow.id, startedAt: new Date(tripRow.started_at).getTime(),
+    tractorNumber: tripRow.tractor_number, trailerNumber: tripRow.trailer_number,
+    driverLabel: tripRow.driver ? `${tripRow.driver.first_name} ${tripRow.driver.last_name}` : "Noma'lum haydovchi",
+    startKm: Number(tripRow.start_km), startMotoChas: Number(tripRow.start_moto_chas),
+    motoChasPhoto: tripRow.moto_chas_photo,
+    completed: tripRow.completed,
+    history: (eventRows || []).map(rowToEvent),
+    sends: (sendRows || []).map((r) => ({ id: r.id, batchNumber: r.batch_number, sentAt: new Date(r.sent_at).getTime() })),
+  };
+}
+function batchEventsFor(history, batchId) { return history.filter((e) => e.batchId === batchId).sort((a, b) => a.at - b.at); }
+const BATCH_FIELDS = {
+  zagruzka: ["address", "km", "distance"],
+  zapravka: ["km", "distance", "tractorLiters", "trailerLiters", "adBlue"],
+  vigruzka: ["address", "km", "distance", "motoChas", "motoChasWorked"],
+};
+function formatFieldValue(f, v) {
+  if (f === "loadStatus") return LOAD_LABELS[v] || v;
+  if (f === "km" || f === "distance" || f === "newKm") return `${fmt(v)} km`;
+  if (f === "motoChas" || f === "motoChasWorked") return `${fmt(v)} soat`;
+  if (f.toLowerCase().includes("liters") || f === "adBlue") return `${fmt(v)} l`;
+  return v;
+}
+function buildBatchText(trip, events) {
+  const lines = [`YO'LDA — yuborilgan ma'lumotlar`, `Haydovchi: ${trip.driverLabel}`, `Tyagach: ${trip.tractorNumber || ""}   Prisep: ${trip.trailerNumber || "YO'Q"}`, ""];
+  events.forEach((ev) => {
+    const label = ev.type === "zagruzka" ? "ZAGRUZKA" : ev.type === "zapravka" ? "ZAPRAVKA" : ev.type === "vigruzka" ? "VIGRUZKA" : (CHANGE_LABELS[ev.type] || ev.type);
+    lines.push(`[${label}] ${fmtDate(ev.at)}`);
+    const fields = BATCH_FIELDS[ev.type] || ["address", "km", "newKm", "motoChas", "loadStatus", "newTractorNumber", "newTrailerNumber"];
+    fields.forEach((f) => { if (ev[f] !== undefined && ev[f] !== null && ev[f] !== "") lines.push(`  ${FIELD_LABELS[f]}: ${formatFieldValue(f, ev[f])}`); });
+    lines.push("");
+  });
+  return lines.join("\n");
+}
+
+// ==================== APP ====================
+function App() {
+  const [view, setView] = useState("list"); // list | detail
+  const [trips, setTrips] = useState(null);
+  const [listTab, setListTab] = useState("active");
+  const [query, setQuery] = useState("");
+  const [selectedId, setSelectedId] = useState(null);
+
+  async function loadList() {
+    const { data } = await sb.from("trips").select("*, driver:drivers(first_name,last_name)").order("started_at", { ascending: false });
+    setTrips(data || []);
+  }
+  useEffect(() => { loadList(); }, []);
+
+  const filtered = (trips || []).filter((t) => {
+    if (listTab === "active" && t.completed) return false;
+    if (listTab === "history" && !t.completed) return false;
+    if (!query.trim()) return true;
+    const q = query.trim().toLowerCase();
+    return (t.tractor_number || "").toLowerCase().includes(q) || (t.trailer_number || "").toLowerCase().includes(q) || `${t.driver?.first_name || ""} ${t.driver?.last_name || ""}`.toLowerCase().includes(q);
+  });
+
+  return (
+    <div style={{ background: COLORS.bg, minHeight: "100vh", fontFamily: "Inter", color: COLORS.text }}>
+      <style>{FONT_IMPORT}</style>
+      <div style={{ padding: "20px 18px 14px", borderBottom: `1px solid ${COLORS.border}`, display: "flex", alignItems: "center", gap: 10 }}>
+        {view === "detail" && (
+          <button onClick={() => { setView("list"); setSelectedId(null); loadList(); }} style={{ background: COLORS.panel2, border: "none", borderRadius: 8, width: 34, height: 34, color: COLORS.text, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}><ChevronLeft size={18} /></button>
+        )}
+        <div style={{ width: 34, height: 34, borderRadius: 8, background: COLORS.amber, display: "flex", alignItems: "center", justifyContent: "center" }}><Truck size={19} color="#1A1300" /></div>
+        <div><div style={{ fontFamily: "Oswald", fontWeight: 700, fontSize: 19, letterSpacing: 0.5 }}>YO'LDA — OFIS</div><div style={{ fontSize: 11, color: COLORS.muted, marginTop: -2 }}>barcha haydovchilar va reyslar</div></div>
+      </div>
+
+      <div style={{ maxWidth: 560, margin: "0 auto", padding: "16px 16px 40px" }}>
+        {view === "list" ? (
+          <TripsList trips={filtered} loading={trips === null} listTab={listTab} setListTab={setListTab} query={query} setQuery={setQuery} onOpen={(id) => { setSelectedId(id); setView("detail"); }} />
+        ) : (
+          <TripDetail tripId={selectedId} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TripsList({ trips, loading, listTab, setListTab, query, setQuery, onOpen }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <SegmentedChoice options={[{ id: "active", label: "Faol reyslar" }, { id: "history", label: "Tarix" }]} value={listTab} onChange={setListTab} />
+      <div style={{ display: "flex", alignItems: "center", gap: 8, background: COLORS.panel2, border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: "9px 12px" }}>
+        <Search size={15} color={COLORS.muted} />
+        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Haydovchi, tyagach yoki prisep raqami..." style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: COLORS.text, fontFamily: "Inter", fontSize: 13 }} />
+      </div>
+
+      {loading && <Panel style={{ textAlign: "center", padding: "30px 20px", color: COLORS.muted, fontSize: 13 }}>Yuklanmoqda...</Panel>}
+      {!loading && trips.length === 0 && <Panel style={{ textAlign: "center", padding: "30px 20px", color: COLORS.muted, fontSize: 13 }}>Hech narsa topilmadi</Panel>}
+
+      {trips.map((t) => (
+        <Panel key={t.id} style={{ padding: 0, overflow: "hidden" }}>
+          <button onClick={() => onOpen(t.id)} style={{ width: "100%", background: "transparent", border: "none", padding: 16, display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer", color: COLORS.text, textAlign: "left" }}>
+            <div>
+              <div style={{ fontFamily: "Oswald", fontSize: 15, fontWeight: 600 }}>{t.driver ? `${t.driver.first_name} ${t.driver.last_name}` : "Noma'lum haydovchi"}</div>
+              <div style={{ fontSize: 11.5, color: COLORS.muted, marginTop: 3 }}>
+                Tyagach: <b style={{ color: COLORS.text }}>{t.tractor_number}</b> · Prisep: <b style={{ color: t.trailer_number ? COLORS.text : COLORS.red }}>{t.trailer_number || "YO'Q"}</b>
+              </div>
+              <div style={{ fontSize: 10.5, color: COLORS.muted, marginTop: 2 }}>Boshlangan: {fmtDate(t.started_at)}</div>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
+              <span style={{ background: t.completed ? COLORS.muted + "33" : COLORS.green + "22", color: t.completed ? COLORS.muted : COLORS.green, fontSize: 10, fontWeight: 700, padding: "3px 8px", borderRadius: 20 }}>{t.completed ? "YAKUNLANGAN" : "FAOL"}</span>
+              <ChevronRight size={16} color={COLORS.muted} />
+            </div>
+          </button>
+        </Panel>
+      ))}
+    </div>
+  );
+}
+
+function TripDetail({ tripId }) {
+  const [trip, setTrip] = useState(null);
+  const [openId, setOpenId] = useState(null);
+  const [copiedId, setCopiedId] = useState(null);
+
+  useEffect(() => { (async () => setTrip(await fetchTripFull(tripId)))(); }, [tripId]);
+
+  if (!trip) return <Panel style={{ textAlign: "center", padding: "30px 20px", color: COLORS.muted, fontSize: 13 }}>Yuklanmoqda...</Panel>;
+
+  const derived = deriveTrip(trip);
+  const pendingHistory = derived.history.filter((e) => !e.batchId);
+  const pendingFiles = computeFiles(pendingHistory);
+  const changes = derived.history.filter((e) => e.type in CHANGE_LABELS);
+
+  function renderFileEvents(f, editableLook) {
+    return (<>
+      {f.zagruzkas.map((z) => <EventDetail key={z.id} label="ZAGRUZKA" ev={z} fields={["address", "km", "distance"]} />)}
+      {f.zapravkas.map((z) => <EventDetail key={z.id} label="ZAPRAVKA" ev={z} fields={["km", "distance", "tractorLiters", "trailerLiters", "adBlue"]} />)}
+      {f.vigruzkas.map((z) => <EventDetail key={z.id} label="VIGRUZKA" ev={z} fields={["address", "km", "distance", "motoChas", "motoChasWorked"]} />)}
+    </>);
+  }
+
+  async function copyBatch(batch, events) {
+    const text = buildBatchText({ driverLabel: trip.driverLabel, tractorNumber: derived.tractorNumber, trailerNumber: derived.trailerNumber }, events);
+    try { await navigator.clipboard.writeText(text); setCopiedId(batch.id); setTimeout(() => setCopiedId(null), 1500); } catch {}
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <Panel>
+        <div style={{ fontSize: 12, color: COLORS.muted, marginBottom: 10 }}>Haydovchi: <b style={{ color: COLORS.text }}>{trip.driverLabel}</b></div>
+        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 14 }}>
+          <div><div style={{ fontSize: 10.5, color: COLORS.muted, letterSpacing: 0.5 }}>TYAGACH</div><div style={{ fontFamily: "Oswald", fontSize: 18, fontWeight: 700 }}>{derived.tractorNumber}</div></div>
+          <div style={{ textAlign: "right" }}><div style={{ fontSize: 10.5, color: COLORS.muted, letterSpacing: 0.5 }}>PRISEP</div><div style={{ fontFamily: "Oswald", fontSize: 18, fontWeight: 700, color: derived.trailerNumber ? COLORS.text : COLORS.red }}>{derived.trailerNumber || "PRISEPSIZ"}</div></div>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+          <Readout label="Joriy km" value={fmt(derived.lastKm)} unit="km" />
+          <Readout label="Moto-soat" value={fmt(derived.lastMotoChas)} unit="soat" tone="amber" />
+        </div>
+        {trip.completed && <div style={{ marginTop: 12, fontSize: 11, color: COLORS.muted }}>Bu reys yakunlangan.</div>}
+      </Panel>
+
+      {pendingFiles.length > 0 && (
+        <div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}><Clock size={14} color={COLORS.amber} /><span style={{ fontFamily: "Oswald", fontSize: 14, fontWeight: 600, color: COLORS.amber }}>Jarayonda (hali tasdiqlanmagan)</span></div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {pendingFiles.map((f) => {
+              const key = `p-${f.dayKey}`; const isOpen = openId === key;
+              return (
+                <Panel key={key} style={{ padding: 0, overflow: "hidden", borderColor: COLORS.amber + "44" }}>
+                  <button onClick={() => setOpenId(isOpen ? null : key)} style={{ width: "100%", background: "transparent", border: "none", padding: 16, display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer", color: COLORS.text }}>
+                    <div style={{ textAlign: "left" }}><div style={{ fontFamily: "Oswald", fontSize: 14, fontWeight: 600 }}>{f.dayLabel}</div><div style={{ fontSize: 11, color: COLORS.muted, marginTop: 2 }}>{[f.zagruzkas.length > 0 && `Zagruzka ×${f.zagruzkas.length}`, f.zapravkas.length > 0 && `Zapravka ×${f.zapravkas.length}`, f.vigruzkas.length > 0 && `Vigruzka ×${f.vigruzkas.length}`].filter(Boolean).join(" · ")}</div></div>
+                    {isOpen ? <ChevronLeft size={16} color={COLORS.muted} /> : <ChevronRight size={16} color={COLORS.muted} />}
+                  </button>
+                  {isOpen && <div style={{ padding: "0 16px 16px", borderTop: `1px solid ${COLORS.border}`, paddingTop: 14, display: "flex", flexDirection: "column", gap: 14 }}>{renderFileEvents(f)}</div>}
+                </Panel>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      <div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}><Lock size={14} color={COLORS.green} /><span style={{ fontFamily: "Oswald", fontSize: 14, fontWeight: 600, color: COLORS.green }}>Yuborilgan jo'natishlar</span></div>
+        {trip.sends.length === 0 && <Panel style={{ textAlign: "center", padding: "20px", color: COLORS.muted, fontSize: 12.5 }}>Hali hech narsa yuborilmagan</Panel>}
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {[...trip.sends].reverse().map((batch) => {
+            const events = batchEventsFor(derived.history, batch.id);
+            if (events.length === 0) return null;
+            const fromAt = events[0].at, toAt = events[events.length - 1].at;
+            const key = `b-${batch.id}`; const isOpen = openId === key;
+            return (
+              <Panel key={key} style={{ padding: 0, overflow: "hidden" }}>
+                <button onClick={() => setOpenId(isOpen ? null : key)} style={{ width: "100%", background: "transparent", border: "none", padding: 16, display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer", color: COLORS.text }}>
+                  <div style={{ textAlign: "left" }}>
+                    <div style={{ fontFamily: "Oswald", fontSize: 14, fontWeight: 600 }}>🔒 {batch.batchNumber}-jo'natish</div>
+                    <div style={{ fontSize: 11, color: COLORS.muted, marginTop: 2 }}>Boshlang'ich: {fmtDate(fromAt)}</div>
+                    <div style={{ fontSize: 11, color: COLORS.muted }}>Tugash: {fmtDate(toAt)}</div>
+                  </div>
+                  {isOpen ? <ChevronLeft size={16} color={COLORS.muted} /> : <ChevronRight size={16} color={COLORS.muted} />}
+                </button>
+                {isOpen && (
+                  <div style={{ padding: "0 16px 16px", borderTop: `1px solid ${COLORS.border}`, paddingTop: 14, display: "flex", flexDirection: "column", gap: 14 }}>
+                    <button onClick={() => copyBatch(batch, events)} style={{ alignSelf: "flex-start", background: COLORS.panel2, border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: "8px 14px", color: COLORS.amber, fontFamily: "Inter", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>{copiedId === batch.id ? "Nusxalandi ✓" : "📋 Nusxalash"}</button>
+                    {events.map((ev) => <EventDetail key={ev.id} label={ev.type === "zagruzka" ? "ZAGRUZKA" : ev.type === "zapravka" ? "ZAPRAVKA" : ev.type === "vigruzka" ? "VIGRUZKA" : (CHANGE_LABELS[ev.type] || ev.type)} ev={ev} fields={ev.type === "zagruzka" ? ["address", "km", "distance"] : ev.type === "zapravka" ? ["km", "distance", "tractorLiters", "trailerLiters", "adBlue"] : ev.type === "vigruzka" ? ["address", "km", "distance", "motoChas", "motoChasWorked"] : ["address", "km", "newKm", "motoChas", "loadStatus", "newTractorNumber", "newTrailerNumber"]} />)}
+                  </div>
+                )}
+              </Panel>
+            );
+          })}
+        </div>
+      </div>
+
+      {changes.length > 0 && (
+        <div>
+          <div style={{ fontFamily: "Oswald", fontSize: 14, fontWeight: 600, marginBottom: 10 }}>Transport almashinuvlari</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {changes.map((ev) => <EventDetail key={ev.id} label={CHANGE_LABELS[ev.type]} ev={ev} fields={["address", "km", "newKm", "motoChas", "loadStatus", "newTractorNumber", "newTrailerNumber"]} standalonePanel />)}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
