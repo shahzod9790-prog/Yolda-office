@@ -1,0 +1,15 @@
+import { createRequire } from "module";
+import fs from "fs";
+const require = createRequire("/opt/npm-tools/node_modules/");
+const esbuild = require("esbuild");
+const [,, src, out] = process.argv;
+let html = fs.readFileSync(src, "utf8");
+const re = /<script type="text\/babel"[^>]*>([\s\S]*?)<\/script>/;
+const m = html.match(re);
+if (!m) throw new Error("babel script block not found");
+const r = esbuild.transformSync(m[1], { loader: "jsx", jsx: "transform", target: "es2018", minify: true, legalComments: "none" });
+if (/<\/script/i.test(r.code)) throw new Error("</script found in output");
+html = html.replace(re, () => "<script>" + r.code + "</script>");
+html = html.replace(/<script src="[^"]*@babel\/standalone[^"]*"><\/script>\n?/, "");
+fs.writeFileSync(out, html);
+console.log("in", fs.statSync(src).size, "out", fs.statSync(out).size);
