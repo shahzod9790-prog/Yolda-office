@@ -1,0 +1,33 @@
+{
+  "name": "YO'LDA Ofis",
+  "short_name": "YO'LDA Ofis",
+  "description": "YO'LDA ofis paneli — barcha haydovchilar va reyslar",
+  "lang": "uz",
+  "start_url": "/",
+  "scope": "/",
+  "id": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#14171A",
+  "theme_color": "#14171A",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
