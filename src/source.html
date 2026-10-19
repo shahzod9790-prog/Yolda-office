@@ -29,7 +29,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.25.6/babel.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
 <script type="text/babel" data-presets="react">
-const { useState, useEffect } = React;
+const { useState, useEffect, useRef } = React;
 
 const SUPABASE_URL = "https://orflkpzbmluqfrebdaho.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9yZmxrcHpibWx1cWZyZWJkYWhvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE2NjQyMTgsImV4cCI6MjEwNzI0MDIxOH0.wng5OwkrEbeDKNv6-RP6ypXe9hIaBvnNevkvLno1wh8";
@@ -62,11 +62,170 @@ function Readout({ label, value, unit, tone = "green" }) {
   const c = tone === "green" ? COLORS.green : tone === "red" ? COLORS.red : COLORS.amber;
   return (<div style={{ display: "flex", flexDirection: "column", gap: 2 }}><span style={{ fontFamily: "Inter", fontSize: 11, color: COLORS.muted, letterSpacing: 0.4, textTransform: "uppercase" }}>{label}</span><div style={{ fontFamily: "'Roboto Mono', monospace", fontWeight: 700, fontSize: 20, color: c }}>{value}{unit && <span style={{ fontSize: 11, color: COLORS.muted, marginLeft: 5, fontFamily: "Inter" }}>{unit}</span>}</div></div>);
 }
+// ---------------- Rasmni ilova ichida kattalashtirib ko'rish ----------------
+// Eslatma: window.open(data:...) brauzerlarda (Safari, Chrome) bloklanadi va bo'sh/qora sahifa chiqadi,
+// shuning uchun rasm shu oynada ochiladi: ikki barmoq bilan kattalashtirish, surish, ikki marta bosish, oldingi/keyingi.
+function PhotoViewer({ photos, startIndex = 0, label, onClose, allowDownload }) {
+  const MAX_ZOOM = 6;
+  const [idx, setIdx] = useState(Math.min(Math.max(startIndex, 0), Math.max(photos.length - 1, 0)));
+  const [view, setView] = useState({ s: 1, x: 0, y: 0 });
+  const [dragging, setDragging] = useState(false);
+  const [dark, setDark] = useState(false);
+  const [broken, setBroken] = useState(false);
+  const stageRef = useRef(null), imgRef = useRef(null), viewRef = useRef(view), api = useRef({});
+  const ptrs = useRef(new Map());
+  const g = useRef({ startDist: 0, startS: 1, startMidX: 0, startMidY: 0, baseX: 0, baseY: 0, downX: 0, downY: 0, moved: false, lastTap: 0, lastTapX: 0, lastTapY: 0, dx: 0 });
+  viewRef.current = view;
+  const photo = photos[idx], url = photoUrl(photo), comment = photoComment(photo);
+
+  function clampView(s, x, y) {
+    const st = stageRef.current, im = imgRef.current;
+    if (!st || !im || !im.naturalWidth) return { s, x, y };
+    const fit = Math.min(st.clientWidth / im.naturalWidth, st.clientHeight / im.naturalHeight);
+    const mx = Math.max(0, (im.naturalWidth * fit * s - st.clientWidth) / 2), my = Math.max(0, (im.naturalHeight * fit * s - st.clientHeight) / 2);
+    return { s, x: Math.min(mx, Math.max(-mx, x)), y: Math.min(my, Math.max(-my, y)) };
+  }
+  function centerOf() { const r = stageRef.current.getBoundingClientRect(); return { cx: r.left + r.width / 2, cy: r.top + r.height / 2 }; }
+  // (px,py) — stage markaziga nisbatan nuqta; shu nuqta o'z joyida qoladi
+  function zoomTo(ns, px, py) {
+    const v = viewRef.current; ns = Math.min(MAX_ZOOM, Math.max(1, ns));
+    if (ns <= 1.001) { setView({ s: 1, x: 0, y: 0 }); return; }
+    const k = ns / v.s;
+    setView(clampView(ns, px - (px - v.x) * k, py - (py - v.y) * k));
+  }
+  function reset() { setView({ s: 1, x: 0, y: 0 }); }
+  function go(d) {
+    const n = idx + d; if (n < 0 || n >= photos.length) { reset(); return; }
+    setIdx(n); setView({ s: 1, x: 0, y: 0 }); setDark(false); setBroken(false);
+  }
+  api.current = { zoomTo, go, onClose, centerOf };
+
+  useEffect(() => {
+    const prevOverflow = document.body.style.overflow; document.body.style.overflow = "hidden";
+    // Telefondagi "orqaga" tugmasi/surish ilovadan chiqarib yubormasdan avval rasmni yopsin
+    let byPop = false;
+    try { window.history.pushState({ yoldaViewer: 1 }, ""); } catch (e) {}
+    const onPop = () => { byPop = true; api.current.onClose(); };
+    window.addEventListener("popstate", onPop);
+    const onKey = (e) => {
+      const tg = e.target; if (tg && (tg.tagName === "INPUT" || tg.tagName === "TEXTAREA")) return;
+      if (e.key === "Escape") api.current.onClose();
+      else if (e.key === "ArrowLeft") api.current.go(-1);
+      else if (e.key === "ArrowRight") api.current.go(1);
+      else if (e.key === "+" || e.key === "=") { api.current.zoomTo(viewRef.current.s * 1.5, 0, 0); }
+      else if (e.key === "-") { api.current.zoomTo(viewRef.current.s / 1.5, 0, 0); }
+    };
+    window.addEventListener("keydown", onKey);
+    const st = stageRef.current;
+    const onWheel = (e) => {
+      e.preventDefault();
+      const { cx, cy } = api.current.centerOf();
+      api.current.zoomTo(viewRef.current.s * Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0018)), e.clientX - cx, e.clientY - cy);
+    };
+    if (st) st.addEventListener("wheel", onWheel, { passive: false });
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener("popstate", onPop); window.removeEventListener("keydown", onKey);
+      if (st) st.removeEventListener("wheel", onWheel);
+      if (!byPop) { try { if (window.history.state && window.history.state.yoldaViewer) window.history.back(); } catch (e) {} }
+    };
+  }, []);
+
+  function onImgLoad(e) {
+    setBroken(false);
+    try { // butunlay qora rasmni aniqlaymiz (eski kamera xatosi tufayli saqlangan)
+      const c = document.createElement("canvas"); c.width = 24; c.height = 24;
+      const cx = c.getContext("2d"); cx.drawImage(e.target, 0, 0, 24, 24);
+      const d = cx.getImageData(0, 0, 24, 24).data; let sum = 0, mx = 0;
+      for (let i = 0; i < d.length; i += 4) { const l = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]; sum += l; if (l > mx) mx = l; }
+      setDark(sum / (d.length / 4) < 6 && mx < 30);
+    } catch (err) { setDark(false); }
+  }
+
+  function onPointerDown(e) {
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) {}
+    ptrs.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const v = viewRef.current, s = g.current;
+    if (ptrs.current.size === 1) { s.moved = false; s.downX = e.clientX; s.downY = e.clientY; s.baseX = v.x; s.baseY = v.y; s.dx = 0; setDragging(true); }
+    else if (ptrs.current.size === 2) {
+      const [a, b] = Array.from(ptrs.current.values()); const { cx, cy } = centerOf();
+      s.startDist = Math.hypot(a.x - b.x, a.y - b.y) || 1; s.startS = v.s; s.baseX = v.x; s.baseY = v.y;
+      s.startMidX = (a.x + b.x) / 2 - cx; s.startMidY = (a.y + b.y) / 2 - cy; s.moved = true;
+    }
+  }
+  function onPointerMove(e) {
+    if (!ptrs.current.has(e.pointerId)) return;
+    ptrs.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const s = g.current, v = viewRef.current;
+    if (ptrs.current.size >= 2) {
+      const [a, b] = Array.from(ptrs.current.values()); const { cx, cy } = centerOf();
+      const ns = Math.min(MAX_ZOOM, Math.max(1, s.startS * (Math.hypot(a.x - b.x, a.y - b.y) / s.startDist)));
+      const mx = (a.x + b.x) / 2 - cx, my = (a.y + b.y) / 2 - cy, k = ns / s.startS;
+      setView(clampView(ns, mx - (s.startMidX - s.baseX) * k, my - (s.startMidY - s.baseY) * k));
+    } else {
+      const dx = e.clientX - s.downX, dy = e.clientY - s.downY;
+      if (Math.abs(dx) + Math.abs(dy) > 8) s.moved = true;
+      if (v.s > 1.001) setView(clampView(v.s, s.baseX + dx, s.baseY + dy));
+      else if (photos.length > 1) { s.dx = dx; setView({ s: 1, x: dx * 0.6, y: 0 }); }
+    }
+  }
+  function onPointerUp(e) {
+    if (!ptrs.current.has(e.pointerId)) return;
+    ptrs.current.delete(e.pointerId);
+    const s = g.current, v = viewRef.current;
+    if (ptrs.current.size === 1) { // pinchdan keyin bitta barmoq qoldi — surishni shu yerdan davom ettiramiz
+      const p = Array.from(ptrs.current.values())[0]; s.downX = p.x; s.downY = p.y; s.baseX = v.x; s.baseY = v.y; s.moved = true; return;
+    }
+    if (ptrs.current.size > 0) return;
+    setDragging(false);
+    if (e.type === "pointercancel") { setView(v.s <= 1.02 ? { s: 1, x: 0, y: 0 } : v); return; }
+    if (v.s <= 1.02) {
+      if (s.moved && Math.abs(s.dx) > 60 && photos.length > 1) { go(s.dx < 0 ? 1 : -1); s.dx = 0; return; }
+      s.dx = 0; if (v.x !== 0 || v.s !== 1) setView({ s: 1, x: 0, y: 0 });
+    }
+    if (!s.moved) { // bosish: ikki marta bosish — yaqinlashtirish / qaytarish
+      const now = Date.now(), { cx, cy } = centerOf();
+      if (now - s.lastTap < 320 && Math.hypot(e.clientX - s.lastTapX, e.clientY - s.lastTapY) < 30) { s.lastTap = 0; if (v.s > 1.05) reset(); else zoomTo(2.5, e.clientX - cx, e.clientY - cy); }
+      else { s.lastTap = now; s.lastTapX = e.clientX; s.lastTapY = e.clientY; }
+    }
+  }
+
+  const btn = { background: "#ffffff1F", border: "1px solid #ffffff33", color: "#fff", borderRadius: 10, minWidth: 44, height: 44, fontSize: 22, lineHeight: 1, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "Inter", padding: "0 12px" };
+  return ReactDOM.createPortal(
+    <div data-photo-viewer="" role="dialog" aria-modal="true" aria-label="Rasmni ko'rish" onClick={(e) => e.stopPropagation()} style={{ position: "fixed", inset: 0, zIndex: 100, background: "#000", display: "flex", flexDirection: "column", userSelect: "none", WebkitUserSelect: "none", touchAction: "none", fontFamily: "Inter" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "calc(10px + env(safe-area-inset-top)) 14px 10px", color: "#fff" }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 13.5, fontWeight: 600 }}>{label || "Rasm"}{photos.length > 1 ? `  ·  ${idx + 1} / ${photos.length}` : ""}</div>
+          {comment && <div style={{ fontSize: 12, opacity: 0.8, fontStyle: "italic", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{comment}</div>}
+        </div>
+        <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+          {allowDownload && <a href={url} download={`yolda-rasm-${idx + 1}.jpg`} style={{ ...btn, fontSize: 13, textDecoration: "none", fontWeight: 600 }}>Yuklab olish</a>}
+          <button onClick={onClose} aria-label="Yopish" style={btn}>✕</button>
+        </div>
+      </div>
+      <div style={{ position: "relative", flex: 1, minHeight: 0 }}>
+        <div ref={stageRef} data-photo-stage="" onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp} style={{ position: "absolute", inset: 0, overflow: "hidden", touchAction: "none", cursor: view.s > 1 ? "grab" : "zoom-in" }}>
+          <img key={idx} ref={imgRef} src={url} alt="" draggable={false} onLoad={onImgLoad} onError={() => setBroken(true)} style={{ width: "100%", height: "100%", objectFit: "contain", pointerEvents: "none", transformOrigin: "center", transform: `translate(${view.x}px, ${view.y}px) scale(${view.s})`, transition: dragging ? "none" : "transform 0.18s ease-out", willChange: "transform" }} />
+        </div>
+        {(dark || broken) && <div data-photo-warning="" style={{ position: "absolute", left: 14, right: 14, bottom: 12, background: "#2A1A00F0", border: "1px solid #F5A623", borderRadius: 10, padding: "10px 12px", color: "#fff", fontSize: 12.5, lineHeight: 1.5, zIndex: 2, pointerEvents: "none" }}>{broken ? "Bu rasmni ochib bo'lmadi." : "Bu rasm qora bo'lib saqlangan (eski kamera xatosi). Uni tiklab bo'lmaydi — hujjat qayta suratga olinishi kerak."}</div>}
+      </div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: "10px 14px calc(12px + env(safe-area-inset-bottom))", color: "#fff" }}>
+        {photos.length > 1 && <button onClick={() => go(-1)} aria-label="Oldingi rasm" disabled={idx === 0} style={{ ...btn, opacity: idx === 0 ? 0.35 : 1 }}>‹</button>}
+        <button onClick={() => zoomTo(view.s / 1.5, 0, 0)} aria-label="Kichiklashtirish" disabled={view.s <= 1.001} style={{ ...btn, opacity: view.s <= 1.001 ? 0.4 : 1 }}>−</button>
+        <button onClick={reset} aria-label="Asl holiga qaytarish" style={{ ...btn, fontSize: 13, fontWeight: 600, minWidth: 64 }}>{Math.round(view.s * 100)}%</button>
+        <button onClick={() => zoomTo(view.s * 1.5, 0, 0)} aria-label="Kattalashtirish" disabled={view.s >= MAX_ZOOM - 0.001} style={{ ...btn, opacity: view.s >= MAX_ZOOM - 0.001 ? 0.4 : 1 }}>+</button>
+        {photos.length > 1 && <button onClick={() => go(1)} aria-label="Keyingi rasm" disabled={idx === photos.length - 1} style={{ ...btn, opacity: idx === photos.length - 1 ? 0.35 : 1 }}>›</button>}
+      </div>
+    </div>,
+    document.body
+  );
+}
 function PhotoGroup({ label, photos }) {
+  const [open, setOpen] = useState(null);
   if (!photos || photos.length === 0) return null;
   return (<div style={{ display: "flex", flexDirection: "column", gap: 4 }}>{label && <span style={{ fontSize: 9.5, color: COLORS.muted }}>{label}</span>}<div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>{photos.map((p, i) => { const url = photoUrl(p), comment = photoComment(p); return (
-    <div key={i} style={{ display: "flex", flexDirection: "column", gap: 3, width: 48 }}><img src={url} alt="" onClick={() => window.open(url, "_blank")} style={{ width: 48, height: 48, objectFit: "cover", borderRadius: 6, cursor: "pointer" }} />{comment && <span style={{ fontSize: 8.5, color: COLORS.muted, fontStyle: "italic", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={comment}>{comment}</span>}</div>
-  ); })}</div></div>);
+    <div key={i} style={{ display: "flex", flexDirection: "column", gap: 3, width: 48 }}><img src={url} alt="" onClick={() => setOpen(i)} style={{ width: 48, height: 48, objectFit: "cover", borderRadius: 6, cursor: "pointer" }} />{comment && <span style={{ fontSize: 8.5, color: COLORS.muted, fontStyle: "italic", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={comment}>{comment}</span>}</div>
+  ); })}</div>{open !== null && <PhotoViewer photos={photos} startIndex={open} label={label} allowDownload onClose={() => setOpen(null)} />}</div>);
 }
 function PhotoGroupRow({ ev }) {
   return (<>
