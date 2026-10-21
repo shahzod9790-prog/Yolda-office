@@ -40,7 +40,10 @@ function num(v) { const n = parseFloat(v); return isNaN(n) ? 0 : n; }
 function fmt(n, d = 0) { return (Math.round(n * 10 ** d) / 10 ** d).toLocaleString("ru-RU"); }
 function fmtDate(ts) { return new Date(ts).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }); }
 function photoUrl(p) { return typeof p === "string" ? p : p?.url; }
+function photoThumb(p) { return typeof p === "string" ? p : (p?.thumb || p?.url); }
 function photoComment(p) { return typeof p === "string" ? "" : (p?.comment || ""); }
+// Serverdagi rasm uchun brauzer "saqlash" oynasini ochadigan havola (Supabase ?download= qo'llab-quvvatlaydi); eski (base64) rasm o'z holicha
+function downloadHref(url, name) { return typeof url === "string" && url.startsWith("http") ? url + (url.includes("?") ? "&" : "?") + "download=" + encodeURIComponent(name) : url; }
 const FONT_IMPORT = `@import url('https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Roboto+Mono:wght@500;700&family=Inter:wght@400;500;600&display=swap');`;
 
 function Icon({ size = 20, color = "currentColor", children }) { return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{children}</svg>; }
@@ -72,14 +75,16 @@ function PhotoViewer({ photos, startIndex = 0, label, onClose, allowDownload }) 
   const [dragging, setDragging] = useState(false);
   const [dark, setDark] = useState(false);
   const [broken, setBroken] = useState(false);
-  const stageRef = useRef(null), imgRef = useRef(null), viewRef = useRef(view), api = useRef({});
+  const [loaded, setLoaded] = useState(false); // to'liq rasm yuklandimi (yuklanguncha kichik ko'rinish turadi)
+  const stageRef = useRef(null), imgRef = useRef(null), thumbRef = useRef(null), viewRef = useRef(view), api = useRef({});
   const ptrs = useRef(new Map());
   const g = useRef({ startDist: 0, startS: 1, startMidX: 0, startMidY: 0, baseX: 0, baseY: 0, downX: 0, downY: 0, moved: false, lastTap: 0, lastTapX: 0, lastTapY: 0, dx: 0 });
   viewRef.current = view;
-  const photo = photos[idx], url = photoUrl(photo), comment = photoComment(photo);
+  const photo = photos[idx], url = photoUrl(photo), thumb = photoThumb(photo), comment = photoComment(photo);
+  const hasThumb = !!thumb && thumb !== url;
 
   function clampView(s, x, y) {
-    const st = stageRef.current, im = imgRef.current;
+    const st = stageRef.current, im = (imgRef.current && imgRef.current.naturalWidth) ? imgRef.current : thumbRef.current;
     if (!st || !im || !im.naturalWidth) return { s, x, y };
     const fit = Math.min(st.clientWidth / im.naturalWidth, st.clientHeight / im.naturalHeight);
     const mx = Math.max(0, (im.naturalWidth * fit * s - st.clientWidth) / 2), my = Math.max(0, (im.naturalHeight * fit * s - st.clientHeight) / 2);
@@ -96,7 +101,7 @@ function PhotoViewer({ photos, startIndex = 0, label, onClose, allowDownload }) 
   function reset() { setView({ s: 1, x: 0, y: 0 }); }
   function go(d) {
     const n = idx + d; if (n < 0 || n >= photos.length) { reset(); return; }
-    setIdx(n); setView({ s: 1, x: 0, y: 0 }); setDark(false); setBroken(false);
+    setIdx(n); setView({ s: 1, x: 0, y: 0 }); setDark(false); setBroken(false); setLoaded(false);
   }
   api.current = { zoomTo, go, onClose, centerOf };
 
@@ -131,9 +136,11 @@ function PhotoViewer({ photos, startIndex = 0, label, onClose, allowDownload }) 
     };
   }, []);
 
-  function onImgLoad(e) {
-    setBroken(false);
-    try { // butunlay qora rasmni aniqlaymiz (eski kamera xatosi tufayli saqlangan)
+  // Butunlay qora rasmni aniqlaymiz (eski kamera xatosi tufayli saqlangan). Faqat data: rasmda (kichik ko'rinish yoki eski rasm) ishlaydi —
+  // serverdagi rasm boshqa domen, canvas uni o'qiy olmaydi; lekin uning kichik ko'rinishi har doim bazada bor.
+  function checkDark(e) {
+    if (!String(e.target.src).startsWith("data:")) return;
+    try {
       const c = document.createElement("canvas"); c.width = 24; c.height = 24;
       const cx = c.getContext("2d"); cx.drawImage(e.target, 0, 0, 24, 24);
       const d = cx.getImageData(0, 0, 24, 24).data; let sum = 0, mx = 0;
@@ -141,6 +148,7 @@ function PhotoViewer({ photos, startIndex = 0, label, onClose, allowDownload }) 
       setDark(sum / (d.length / 4) < 6 && mx < 30);
     } catch (err) { setDark(false); }
   }
+  function onFullLoad(e) { setLoaded(true); setBroken(false); checkDark(e); }
 
   function onPointerDown(e) {
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) {}
@@ -199,15 +207,19 @@ function PhotoViewer({ photos, startIndex = 0, label, onClose, allowDownload }) 
           {comment && <div style={{ fontSize: 12, opacity: 0.8, fontStyle: "italic", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{comment}</div>}
         </div>
         <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
-          {allowDownload && <a href={url} download={`yolda-rasm-${idx + 1}.jpg`} style={{ ...btn, fontSize: 13, textDecoration: "none", fontWeight: 600 }}>Yuklab olish</a>}
+          {allowDownload && <a href={downloadHref(url, `yolda-rasm-${idx + 1}.jpg`)} download={`yolda-rasm-${idx + 1}.jpg`} target="_blank" rel="noopener" style={{ ...btn, fontSize: 13, textDecoration: "none", fontWeight: 600 }}>Yuklab olish</a>}
           <button onClick={onClose} aria-label="Yopish" style={btn}>✕</button>
         </div>
       </div>
       <div style={{ position: "relative", flex: 1, minHeight: 0 }}>
         <div ref={stageRef} data-photo-stage="" onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp} style={{ position: "absolute", inset: 0, overflow: "hidden", touchAction: "none", cursor: view.s > 1 ? "grab" : "zoom-in" }}>
-          <img key={idx} ref={imgRef} src={url} alt="" draggable={false} onLoad={onImgLoad} onError={() => setBroken(true)} style={{ width: "100%", height: "100%", objectFit: "contain", pointerEvents: "none", transformOrigin: "center", transform: `translate(${view.x}px, ${view.y}px) scale(${view.s})`, transition: dragging ? "none" : "transform 0.18s ease-out", willChange: "transform" }} />
+          <div style={{ position: "absolute", inset: 0, pointerEvents: "none", transformOrigin: "center", transform: `translate(${view.x}px, ${view.y}px) scale(${view.s})`, transition: dragging ? "none" : "transform 0.18s ease-out", willChange: "transform" }}>
+            {hasThumb && !loaded && <img key={"t" + idx} ref={thumbRef} src={thumb} alt="" draggable={false} onLoad={checkDark} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "contain" }} />}
+            <img key={"f" + idx} ref={imgRef} src={url} alt="" draggable={false} onLoad={onFullLoad} onError={() => setBroken(true)} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "contain", opacity: loaded || !hasThumb ? 1 : 0 }} />
+          </div>
         </div>
-        {(dark || broken) && <div data-photo-warning="" style={{ position: "absolute", left: 14, right: 14, bottom: 12, background: "#2A1A00F0", border: "1px solid #F5A623", borderRadius: 10, padding: "10px 12px", color: "#fff", fontSize: 12.5, lineHeight: 1.5, zIndex: 2, pointerEvents: "none" }}>{broken ? "Bu rasmni ochib bo'lmadi." : "Bu rasm qora bo'lib saqlangan (eski kamera xatosi). Uni tiklab bo'lmaydi — hujjat qayta suratga olinishi kerak."}</div>}
+        {hasThumb && !loaded && !broken && <div data-photo-loading="" style={{ position: "absolute", left: 0, right: 0, bottom: 12, textAlign: "center", color: "#fff", fontSize: 12, opacity: 0.85, pointerEvents: "none", zIndex: 2 }}>To'liq rasm yuklanmoqda…</div>}
+        {(dark || broken) && <div data-photo-warning="" style={{ position: "absolute", left: 14, right: 14, bottom: 12, background: "#2A1A00F0", border: "1px solid #F5A623", borderRadius: 10, padding: "10px 12px", color: "#fff", fontSize: 12.5, lineHeight: 1.5, zIndex: 2, pointerEvents: "none" }}>{broken ? (hasThumb ? "To'liq rasm ochilmadi (internet aloqasini tekshiring). Hozircha kichik ko'rinish turibdi." : "Bu rasmni ochib bo'lmadi.") : "Bu rasm qora bo'lib saqlangan (eski kamera xatosi). Uni tiklab bo'lmaydi — hujjat qayta suratga olinishi kerak."}</div>}
       </div>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: "10px 14px calc(12px + env(safe-area-inset-bottom))", color: "#fff" }}>
         {photos.length > 1 && <button onClick={() => go(-1)} aria-label="Oldingi rasm" disabled={idx === 0} style={{ ...btn, opacity: idx === 0 ? 0.35 : 1 }}>‹</button>}
@@ -224,7 +236,7 @@ function PhotoGroup({ label, photos }) {
   const [open, setOpen] = useState(null);
   if (!photos || photos.length === 0) return null;
   return (<div style={{ display: "flex", flexDirection: "column", gap: 4 }}>{label && <span style={{ fontSize: 9.5, color: COLORS.muted }}>{label}</span>}<div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>{photos.map((p, i) => { const url = photoUrl(p), comment = photoComment(p); return (
-    <div key={i} style={{ display: "flex", flexDirection: "column", gap: 3, width: 48 }}><img src={url} alt="" onClick={() => setOpen(i)} style={{ width: 48, height: 48, objectFit: "cover", borderRadius: 6, cursor: "pointer" }} />{comment && <span style={{ fontSize: 8.5, color: COLORS.muted, fontStyle: "italic", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={comment}>{comment}</span>}</div>
+    <div key={i} style={{ display: "flex", flexDirection: "column", gap: 3, width: 48 }}><img src={photoThumb(p)} alt="" loading="lazy" onClick={() => setOpen(i)} style={{ width: 48, height: 48, objectFit: "cover", borderRadius: 6, cursor: "pointer" }} />{comment && <span style={{ fontSize: 8.5, color: COLORS.muted, fontStyle: "italic", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={comment}>{comment}</span>}</div>
   ); })}</div>{open !== null && <PhotoViewer photos={photos} startIndex={open} label={label} allowDownload onClose={() => setOpen(null)} />}</div>);
 }
 function PhotoGroupRow({ ev }) {
@@ -294,7 +306,7 @@ function computeFiles(history) {
   });
   return days;
 }
-function rowToEvent(row) { return { id: row.id, type: row.type, at: new Date(row.at).getTime(), batchId: row.batch_id || null, ...row.data }; }
+function rowToEvent(row) { return { ...row.data, id: row.id, type: row.type, at: new Date(row.at).getTime(), batchId: row.batch_id || null }; }
 async function fetchTripFull(tripId) {
   const { data: tripRow } = await sb.from("trips").select("*, driver:drivers(first_name,last_name)").eq("id", tripId).single();
   if (!tripRow) return null;
