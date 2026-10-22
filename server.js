@@ -11,6 +11,7 @@ const DAY = 'public, max-age=86400';
 const ROUTES = {
   '/': ['index.html', 'text/html; charset=utf-8', NO_CACHE],
   '/manifest.webmanifest': ['manifest.webmanifest', 'application/manifest+json; charset=utf-8', NO_CACHE],
+  '/version.json': ['version.json', 'application/json; charset=utf-8', 'no-store'], // build raqami — ilova yangilanganini shu orqali biladi
   '/sw.js': ['sw.js', 'application/javascript; charset=utf-8', NO_CACHE, { 'Service-Worker-Allowed': '/' }],
   '/icon-192.png': ['icon-192.png', 'image/png', DAY],
   '/icon-512.png': ['icon-512.png', 'image/png', DAY],
