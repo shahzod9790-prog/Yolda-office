@@ -33,6 +33,15 @@
   @keyframes yb-rot { to { transform: rotate(360deg); } }
   #yolda-upd-banner { position: fixed; left: 8px; right: 8px; top: calc(env(safe-area-inset-top, 0px) + 8px); z-index: 2147482000; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; border-radius: 10px; background: #F5A623; color: #14171A; font: 600 13px/1.3 Inter, system-ui, -apple-system, sans-serif; box-shadow: 0 4px 16px rgba(0,0,0,.5); }
   #yolda-upd-banner button { flex: none; border: 0; border-radius: 8px; padding: 8px 12px; background: #14171A; color: #F5A623; font: 700 13px Inter, system-ui, -apple-system, sans-serif; }
+  /* Ofis (kompyuter): chapda yig'iladigan panel + asosiy maydon */
+  .app-wide { height: 100vh; height: 100dvh; overflow: hidden; }
+  .thin-scroll { scrollbar-width: thin; scrollbar-color: #2B3138 transparent; }
+  .thin-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+  .thin-scroll::-webkit-scrollbar-thumb { background: #2B3138; border-radius: 8px; }
+  .hov:hover { background: #232830 !important; }
+  .hov:focus-visible, .menu-btn:focus-visible { outline: 2px solid #F5A623; outline-offset: -2px; }
+  .side-anim { transition: width .18s ease; }
+  @media (prefers-reduced-motion: reduce) { .side-anim { transition: none; } }
 </style>
 <script>
 // ---------------- Avtomatik yangilanish ----------------
@@ -173,6 +182,12 @@ const Search = (p) => <Icon {...p}><circle cx="11" cy="11" r="7"/><path d="M21 2
 const AlertTriangle = (p) => <Icon {...p}><path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></Icon>;
 const Clock = (p) => <Icon {...p}><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></Icon>;
 const Lock = (p) => <Icon {...p}><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></Icon>;
+const ListIcon = (p) => <Icon {...p}><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3.5" cy="6" r="1"/><circle cx="3.5" cy="12" r="1"/><circle cx="3.5" cy="18" r="1"/></Icon>;
+const Database = (p) => <Icon {...p}><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5"/><path d="M3 12c0 1.7 4 3 9 3s9-1.3 9-3"/></Icon>;
+const Plus = (p) => <Icon {...p}><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></Icon>;
+const Trash = (p) => <Icon {...p}><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></Icon>;
+const Refresh = (p) => <Icon {...p}><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></Icon>;
+const PanelLeft = (p) => <Icon {...p}><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></Icon>;
 
 function Panel({ children, style }) { return <div style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 16, ...style }}>{children}</div>; }
 function SegmentedChoice({ options, value, onChange }) {
@@ -468,12 +483,35 @@ function buildBatchText(trip, events) {
 }
 
 // ==================== APP ====================
+// Keng ekranda (kompyuter) — chapda yig'iladigan panel (menyu + ixcham reyslar ro'yxati), o'ngda asosiy maydon.
+// Telefonda esa avvalgidek bitta ustun.
+function useWide(minPx = 900) {
+  const q = "(min-width: " + minPx + "px)";
+  const get = () => { try { return window.matchMedia(q).matches; } catch { return false; } };
+  const [wide, setWide] = useState(get);
+  useEffect(() => {
+    let mq; try { mq = window.matchMedia(q); } catch { return; }
+    const on = () => setWide(mq.matches); on();
+    if (mq.addEventListener) mq.addEventListener("change", on); else mq.addListener(on);
+    return () => { if (mq.removeEventListener) mq.removeEventListener("change", on); else mq.removeListener(on); };
+  }, [q]);
+  return wide;
+}
+
+function loadSideCollapsed() { try { return localStorage.getItem("yolda_office_side") === "1"; } catch { return false; } }
+function saveSideCollapsed(v) { try { localStorage.setItem("yolda_office_side", v ? "1" : "0"); } catch {} }
+
 function App() {
-  const [view, setView] = useState("list"); // list | detail
+  const wide = useWide();
+  const [section, setSection] = useState("trips"); // trips | base
+  const [view, setView] = useState("list"); // (telefon) list | detail
   const [trips, setTrips] = useState(null);
   const [listTab, setListTab] = useState("active");
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState(null);
+  const [collapsed, setCollapsedState] = useState(loadSideCollapsed);
+  const [tick, setTick] = useState(0); // "Yangilash" bosilganda tanlangan reysni ham qayta yuklash uchun
+  const setCollapsed = (v) => { setCollapsedState(v); saveSideCollapsed(v); };
 
   async function loadList() {
     // Ro'yxat uchun rasmlar kerak emas — faqat kerakli ustunlar yuklanadi (tezroq)
@@ -490,25 +528,121 @@ function App() {
     return (t.tractor_number || "").toLowerCase().includes(q) || (t.trailer_number || "").toLowerCase().includes(q) || `${t.driver?.first_name || ""} ${t.driver?.last_name || ""}`.toLowerCase().includes(q);
   });
 
+  const logo = (
+    <div style={{ width: 34, height: 34, flex: "none", borderRadius: 8, background: COLORS.amber, display: "flex", alignItems: "center", justifyContent: "center" }}><Truck size={19} color="#1A1300" /></div>
+  );
+
+  // ---------- Kompyuter ----------
+  if (wide) {
+    const navItem = (id, label, Ic) => {
+      const active = section === id;
+      return (
+        <button key={id} className="menu-btn hov" aria-label={label} title={label} aria-current={active ? "page" : undefined}
+          onClick={() => { setSection(id); if (id === "trips" && collapsed) setCollapsed(false); }}
+          style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", padding: collapsed ? "11px 0" : "11px 12px", justifyContent: collapsed ? "center" : "flex-start", borderRadius: 8, border: "none", background: active ? COLORS.amber + "1F" : "transparent", color: active ? COLORS.amber : COLORS.text, fontFamily: "Inter", fontWeight: 600, fontSize: 14, cursor: "pointer" }}>
+          <Ic size={19} />{!collapsed && <span>{label}</span>}
+        </button>
+      );
+    };
+    return (
+      <div className="app-shell app-wide" style={{ display: "flex", background: COLORS.bg, fontFamily: "Inter", color: COLORS.text }}>
+        <style>{FONT_IMPORT}</style>
+        <aside className="side-anim" style={{ width: collapsed ? 68 : 330, flex: "none", display: "flex", flexDirection: "column", minHeight: 0, borderRight: `1px solid ${COLORS.border}`, background: COLORS.panel }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "16px 12px 12px", justifyContent: collapsed ? "center" : "space-between" }}>
+            {collapsed ? (
+              <button aria-label="Panelni ochish" title="Panelni ochish" className="hov" onClick={() => setCollapsed(false)} style={{ background: "transparent", border: "none", borderRadius: 8, padding: 4, cursor: "pointer", display: "flex" }}>{logo}</button>
+            ) : (<>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                {logo}
+                <div style={{ minWidth: 0 }}><div style={{ fontFamily: "Oswald", fontWeight: 700, fontSize: 18, letterSpacing: 0.5, whiteSpace: "nowrap" }}>YO'LDA — OFIS</div><div style={{ fontSize: 11, color: COLORS.muted, marginTop: -2 }}>barcha haydovchilar va reyslar</div></div>
+              </div>
+              <button aria-label="Panelni yig'ish" title="Panelni yig'ish" className="hov" onClick={() => setCollapsed(true)} style={{ flex: "none", background: "transparent", border: "none", borderRadius: 8, width: 34, height: 34, color: COLORS.muted, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}><PanelLeft size={18} /></button>
+            </>)}
+          </div>
+          <nav style={{ display: "flex", flexDirection: "column", gap: 4, padding: "4px 10px 10px" }}>
+            {navItem("trips", "Reyslar", ListIcon)}
+            {navItem("base", "Asosiy baza", Database)}
+          </nav>
+          {!collapsed && section === "trips" && (
+            <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", borderTop: `1px solid ${COLORS.border}` }}>
+              <CompactTrips trips={filtered} loading={trips === null} listTab={listTab} setListTab={setListTab} query={query} setQuery={setQuery} selectedId={selectedId}
+                onOpen={setSelectedId} onRefresh={() => { loadList(); setTick((n) => n + 1); }} />
+            </div>
+          )}
+        </aside>
+        <main className="thin-scroll" style={{ flex: 1, minWidth: 0, overflowY: "auto" }}>
+          <div style={{ maxWidth: 820, margin: "0 auto", padding: "22px 28px 48px" }}>
+            {section === "base" ? <BaseScreen /> : selectedId ? <TripDetail key={selectedId + ":" + tick} tripId={selectedId} /> : (
+              <Panel style={{ textAlign: "center", padding: "56px 20px", color: COLORS.muted, fontSize: 14 }}>
+                {collapsed ? <>Reyslar ro'yxatini ochish uchun chapdagi <b style={{ color: COLORS.text }}>Reyslar</b> tugmasini bosing.</> : <>Chap tomondagi ro'yxatdan reysni tanlang.</>}
+              </Panel>
+            )}
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  // ---------- Telefon ----------
+  const inDetail = section === "trips" && view === "detail";
   return (
     <div className="app-shell" style={{ background: COLORS.bg, fontFamily: "Inter", color: COLORS.text }}>
       <style>{FONT_IMPORT}</style>
       <div style={{ padding: "20px 18px 14px", borderBottom: `1px solid ${COLORS.border}`, display: "flex", alignItems: "center", gap: 10 }}>
-        {view === "detail" && (
-          <button onClick={() => { setView("list"); setSelectedId(null); loadList(); }} style={{ background: COLORS.panel2, border: "none", borderRadius: 8, width: 34, height: 34, color: COLORS.text, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}><ChevronLeft size={18} /></button>
+        {inDetail && (
+          <button aria-label="Orqaga" onClick={() => { setView("list"); setSelectedId(null); loadList(); }} style={{ background: COLORS.panel2, border: "none", borderRadius: 8, width: 34, height: 34, color: COLORS.text, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}><ChevronLeft size={18} /></button>
         )}
-        <div style={{ width: 34, height: 34, borderRadius: 8, background: COLORS.amber, display: "flex", alignItems: "center", justifyContent: "center" }}><Truck size={19} color="#1A1300" /></div>
+        {logo}
         <div><div style={{ fontFamily: "Oswald", fontWeight: 700, fontSize: 19, letterSpacing: 0.5 }}>YO'LDA — OFIS</div><div style={{ fontSize: 11, color: COLORS.muted, marginTop: -2 }}>barcha haydovchilar va reyslar</div></div>
       </div>
 
       <div style={{ maxWidth: 560, margin: "0 auto", padding: "16px 16px 40px" }}>
-        {view === "list" ? (
+        {!inDetail && <div style={{ marginBottom: 14 }}><SegmentedChoice options={[{ id: "trips", label: "Reyslar" }, { id: "base", label: "Asosiy baza" }]} value={section} onChange={setSection} /></div>}
+        {section === "base" ? <BaseScreen /> : view === "list" ? (
           <TripsList trips={filtered} loading={trips === null} listTab={listTab} setListTab={setListTab} query={query} setQuery={setQuery} onOpen={(id) => { setSelectedId(id); setView("detail"); }} />
         ) : (
           <TripDetail tripId={selectedId} />
         )}
       </div>
     </div>
+  );
+}
+
+// Kompyuterdagi chap panel uchun ixcham ro'yxat
+function CompactTrips({ trips, loading, listTab, setListTab, query, setQuery, selectedId, onOpen, onRefresh }) {
+  return (
+    <>
+      <div style={{ padding: "12px 12px 8px", display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <div style={{ flex: 1 }}><SegmentedChoice options={[{ id: "active", label: "Faol" }, { id: "history", label: "Tarix" }]} value={listTab} onChange={setListTab} /></div>
+          <button aria-label="Yangilash" title="Yangilash" className="hov" onClick={onRefresh} style={{ flex: "none", background: COLORS.panel2, border: `1px solid ${COLORS.border}`, borderRadius: 8, width: 38, height: 38, color: COLORS.muted, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}><Refresh size={16} /></button>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, background: COLORS.panel2, border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: "8px 10px" }}>
+          <Search size={15} color={COLORS.muted} />
+          <input data-nodraft="" aria-label="Qidirish" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Haydovchi yoki raqam..." style={{ flex: 1, minWidth: 0, background: "transparent", border: "none", outline: "none", color: COLORS.text, fontFamily: "Inter", fontSize: 13 }} />
+        </div>
+      </div>
+      <div className="thin-scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "2px 8px 12px" }}>
+        {loading && <div style={{ textAlign: "center", padding: "24px 10px", color: COLORS.muted, fontSize: 13 }}>Yuklanmoqda...</div>}
+        {!loading && trips.length === 0 && <div style={{ textAlign: "center", padding: "24px 10px", color: COLORS.muted, fontSize: 13 }}>Hech narsa topilmadi</div>}
+        {trips.map((t) => {
+          const sel = t.id === selectedId;
+          return (
+            <button key={t.id} className="hov" aria-current={sel ? "true" : undefined} onClick={() => onOpen(t.id)}
+              style={{ display: "block", width: "100%", textAlign: "left", padding: "9px 10px", marginBottom: 3, borderRadius: 8, border: `1px solid ${sel ? COLORS.amber + "88" : "transparent"}`, background: sel ? COLORS.amber + "14" : "transparent", color: COLORS.text, cursor: "pointer" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                <span style={{ fontFamily: "Oswald", fontSize: 14, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.driver ? `${t.driver.first_name} ${t.driver.last_name}` : "Noma'lum haydovchi"}</span>
+                <span title={t.completed ? "Yakunlangan" : "Faol"} style={{ flex: "none", width: 8, height: 8, borderRadius: "50%", background: t.completed ? COLORS.muted : COLORS.green }} />
+              </div>
+              <div style={{ fontSize: 11.5, color: COLORS.muted, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                <b style={{ color: COLORS.text, fontWeight: 600 }}>{t.tractor_number}</b> · <b style={{ color: t.trailer_number ? COLORS.text : COLORS.red, fontWeight: 600 }}>{t.trailer_number || "YO'Q"}</b>
+              </div>
+              <div style={{ fontSize: 10.5, color: COLORS.muted, marginTop: 1 }}>{fmtDate(t.started_at)}</div>
+            </button>
+          );
+        })}
+      </div>
+    </>
   );
 }
 
@@ -541,6 +675,110 @@ function TripsList({ trips, loading, listTab, setListTab, query, setQuery, onOpe
           </button>
         </Panel>
       ))}
+    </div>
+  );
+}
+
+// ==================== ASOSIY BAZA: tyagach va prisepler ====================
+// Raqam yagona ko'rinishga keltiriladi (bosh harf, ortiqcha bo'shliqsiz); takrorni tekshirishda bo'shliq va harf kattaligi hisobga olinmaydi.
+const normNum = (s) => String(s || "").trim().replace(/\s+/g, " ").toUpperCase();
+const numKey = (s) => String(s || "").replace(/\s+/g, "").toUpperCase();
+
+function BaseScreen() {
+  const [kind, setKind] = useState("tractors"); // tractors | trailers
+  const [data, setData] = useState({ tractors: null, trailers: null });
+  const [loadErr, setLoadErr] = useState(false);
+  const [input, setInput] = useState("");
+  const [filter, setFilter] = useState("");
+  const [msg, setMsg] = useState(null); // { ok, text }
+  const [saving, setSaving] = useState(false);
+  const [confirmId, setConfirmId] = useState(null);
+  const one = kind === "tractors" ? "tyagach" : "prisep";
+
+  async function loadAll() {
+    setLoadErr(false);
+    const res = await Promise.all(["tractors", "trailers"].map((t) => sb.from(t).select("id,number,status,created_at").order("created_at", { ascending: false })));
+    if (res[0].error || res[1].error) setLoadErr(true);
+    setData((d) => ({ tractors: res[0].error ? (d.tractors || []) : res[0].data || [], trailers: res[1].error ? (d.trailers || []) : res[1].data || [] }));
+  }
+  useEffect(() => { loadAll(); }, []);
+
+  const rows = data[kind];
+  const shown = (rows || []).filter((r) => !filter.trim() || numKey(r.number).includes(numKey(filter)));
+
+  async function add() {
+    if (saving || rows === null) return;
+    const number = normNum(input);
+    setMsg(null);
+    if (number.length < 2) return setMsg({ ok: false, text: "Raqamni kiriting (kamida 2 belgi)." });
+    if (number.length > 20) return setMsg({ ok: false, text: "Raqam juda uzun (ko'pi bilan 20 belgi)." });
+    const same = rows.find((r) => numKey(r.number) === numKey(number));
+    if (same) return setMsg({ ok: false, text: `Bu ${one} bazada bor: ${same.number}` });
+    setSaving(true);
+    const { data: row, error } = await sb.from(kind).insert({ number, status: "free" }).select("id,number,status,created_at").single();
+    setSaving(false);
+    if (error) return setMsg({ ok: false, text: error.code === "23505" ? `Bu ${one} bazada bor.` : "Qo'shib bo'lmadi: " + error.message });
+    setData((d) => ({ ...d, [kind]: [row, ...(d[kind] || [])] }));
+    setInput(""); setMsg({ ok: true, text: `Qo'shildi: ${row.number}` });
+  }
+
+  async function remove(row) {
+    setMsg(null); setConfirmId(null);
+    const { data: gone, error } = await sb.from(kind).delete().eq("id", row.id).eq("status", "free").select("id");
+    if (error) return setMsg({ ok: false, text: error.code === "23503" ? "Bu raqam reyslarda ishlatilgan, o'chirib bo'lmaydi." : "O'chirib bo'lmadi: " + error.message });
+    if (!gone || gone.length === 0) return setMsg({ ok: false, text: "O'chirilmadi — u hozir band bo'lishi mumkin. Ro'yxatni yangilang." });
+    setData((d) => ({ ...d, [kind]: (d[kind] || []).filter((r) => r.id !== row.id) }));
+    setMsg({ ok: true, text: `O'chirildi: ${row.number}` });
+  }
+
+  const count = (k) => (data[k] === null ? "" : ` (${data[k].length})`);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div>
+        <div style={{ fontFamily: "Oswald", fontWeight: 700, fontSize: 20, letterSpacing: 0.4 }}>Asosiy baza</div>
+        <div style={{ fontSize: 12, color: COLORS.muted, marginTop: 2 }}>Tyagach va prisep raqamlari ro'yxati</div>
+      </div>
+      <SegmentedChoice options={[{ id: "tractors", label: "Tyagachlar" + count("tractors") }, { id: "trailers", label: "Prisepler" + count("trailers") }]} value={kind} onChange={(k) => { setKind(k); setMsg(null); setConfirmId(null); setFilter(""); }} />
+
+      <Panel>
+        <form onSubmit={(e) => { e.preventDefault(); add(); }} style={{ display: "flex", gap: 8 }}>
+          <input aria-label={`Yangi ${one} raqami`} value={input} onChange={(e) => { setInput(e.target.value); setMsg(null); }} placeholder={kind === "tractors" ? "Yangi tyagach raqami, masalan: MHE 704" : "Yangi prisep raqami, masalan: CO 529"} maxLength={30} autoComplete="off" autoCapitalize="characters"
+            style={{ flex: 1, minWidth: 0, background: COLORS.panel2, border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: "10px 12px", color: COLORS.text, fontFamily: "'Roboto Mono', monospace", fontSize: 15, outline: "none" }} />
+          <button type="submit" disabled={saving || rows === null || !input.trim()} style={{ flex: "none", display: "flex", alignItems: "center", gap: 6, padding: "0 16px", borderRadius: 8, border: "none", background: COLORS.amber, color: "#1A1300", fontFamily: "Inter", fontWeight: 700, fontSize: 14, cursor: "pointer", opacity: saving || rows === null || !input.trim() ? 0.5 : 1 }}><Plus size={16} />{saving ? "..." : "Qo'shish"}</button>
+        </form>
+        {msg && <div role="status" style={{ marginTop: 10, fontSize: 12.5, color: msg.ok ? COLORS.green : COLORS.red }}>{msg.text}</div>}
+        <div style={{ marginTop: 10, fontSize: 11, color: COLORS.muted }}>Haydovchilar hozircha raqamni o'zlari yozadi: ular yozgan yangi raqam ham avtomatik shu ro'yxatga tushadi.</div>
+      </Panel>
+
+      {loadErr && <Panel style={{ color: COLORS.red, fontSize: 13 }}>Ro'yxatni yuklab bo'lmadi. Internetni tekshirib, <button onClick={loadAll} style={{ background: "transparent", border: "none", color: COLORS.amber, fontWeight: 700, cursor: "pointer", fontSize: 13, padding: 0 }}>qayta urining</button>.</Panel>}
+
+      <Panel style={{ padding: 0, overflow: "hidden" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderBottom: `1px solid ${COLORS.border}` }}>
+          <Search size={15} color={COLORS.muted} />
+          <input data-nodraft="" aria-label="Ro'yxatdan qidirish" value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Ro'yxatdan qidirish..." style={{ flex: 1, minWidth: 0, background: "transparent", border: "none", outline: "none", color: COLORS.text, fontFamily: "Inter", fontSize: 13 }} />
+          {rows !== null && <span style={{ flex: "none", fontSize: 11, color: COLORS.muted }}>Jami: {rows.length} · Band: {rows.filter((r) => r.status === "active").length}</span>}
+        </div>
+        {rows === null && <div style={{ textAlign: "center", padding: "26px 16px", color: COLORS.muted, fontSize: 13 }}>Yuklanmoqda...</div>}
+        {rows !== null && shown.length === 0 && <div style={{ textAlign: "center", padding: "26px 16px", color: COLORS.muted, fontSize: 13 }}>{rows.length === 0 ? `Bazada hali ${one} yo'q. Yuqoridan qo'shing.` : "Hech narsa topilmadi"}</div>}
+        {shown.map((r, i) => {
+          const busy = r.status === "active";
+          return (
+            <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 12px", borderTop: i === 0 ? "none" : `1px solid ${COLORS.border}` }}>
+              <span style={{ flex: 1, minWidth: 0, fontFamily: "'Roboto Mono', monospace", fontWeight: 700, fontSize: 15, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.number}</span>
+              <span style={{ flex: "none", background: busy ? COLORS.amber + "22" : COLORS.green + "22", color: busy ? COLORS.amber : COLORS.green, fontSize: 10, fontWeight: 700, padding: "3px 8px", borderRadius: 20 }}>{busy ? "BAND" : "BO'SH"}</span>
+              <span style={{ flex: "none", fontSize: 10.5, color: COLORS.muted, minWidth: 92, textAlign: "right" }}>{fmtDate(r.created_at)}</span>
+              {confirmId === r.id ? (
+                <span style={{ flex: "none", display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
+                  <button onClick={() => remove(r)} style={{ background: COLORS.red + "22", border: `1px solid ${COLORS.red}66`, color: COLORS.red, borderRadius: 6, padding: "4px 9px", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>O'chirish</button>
+                  <button onClick={() => setConfirmId(null)} style={{ background: "transparent", border: `1px solid ${COLORS.border}`, color: COLORS.muted, borderRadius: 6, padding: "4px 9px", fontSize: 12, cursor: "pointer" }}>Yo'q</button>
+                </span>
+              ) : (
+                <button aria-label={`${r.number} ni o'chirish`} title={busy ? "Band — o'chirib bo'lmaydi" : "O'chirish"} disabled={busy} className="hov" onClick={() => setConfirmId(r.id)} style={{ flex: "none", background: "transparent", border: "none", borderRadius: 6, width: 30, height: 30, color: COLORS.muted, display: "flex", alignItems: "center", justifyContent: "center", cursor: busy ? "default" : "pointer", opacity: busy ? 0.25 : 1 }}><Trash size={15} /></button>
+              )}
+            </div>
+          );
+        })}
+      </Panel>
     </div>
   );
 }
