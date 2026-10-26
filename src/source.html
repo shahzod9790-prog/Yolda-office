@@ -440,6 +440,47 @@ function computeFiles(history) {
   });
   return days;
 }
+// ---------------- Km hisobi: pustoy (yuksiz) va yuk bilan masofa ----------------
+// Qoida: reys boshida mashina yuksiz (pustoy). ZAGRUZKA'dan keyin yuk bilan, VIGRUZKA'dan keyin yana pustoy.
+// Har bir yozuvdagi "distance" (oldingi nuqtadan yurilgan masofa) o'sha paytdagi holatga qo'shiladi.
+// Tyagach almashganda eski va yangi tyagach spidometrlari alohida hisoblanadi (deriveTrip shuni ta'minlaydi).
+function computeKmReport(history, startedAt, completed) {
+  const legs = [], warns = [];
+  let state = "empty";
+  let leg = { kind: "empty", fromLabel: "Reys boshi", fromAt: startedAt, km: 0, toLabel: null, toAt: null, open: false };
+  const close = (toLabel, toAt) => { leg.toLabel = toLabel; leg.toAt = toAt; legs.push(leg); };
+  const place = (ev, fallback) => (ev.address && String(ev.address).trim()) || fallback;
+  for (const ev of history) {
+    if (!["zagruzka", "zapravka", "vigruzka", "tractor_end", "trailer_end"].includes(ev.type)) continue;
+    let d = ev.distance;
+    if (typeof d !== "number" || isNaN(d)) d = 0;
+    if (d < 0) { warns.push(`${fmtDate(ev.at)}: km oldingisidan kichik kiritilgan (${fmt(d)} km) — hisobga olinmadi`); d = 0; }
+    leg.km += d;
+    if (ev.type === "zagruzka") {
+      close(place(ev, "Zagruzka"), ev.at); state = "loaded";
+      leg = { kind: "loaded", fromLabel: place(ev, "Zagruzka"), fromAt: ev.at, km: 0, toLabel: null, toAt: null, open: false };
+    } else if (ev.type === "vigruzka") {
+      if (state !== "loaded") warns.push(`${fmtDate(ev.at)}: Vigruzka bor, lekin undan oldin Zagruzka kiritilmagan — bu qism pustoy hisoblandi`);
+      close(place(ev, "Vigruzka"), ev.at); state = "empty";
+      leg = { kind: "empty", fromLabel: place(ev, "Vigruzka"), fromAt: ev.at, km: 0, toLabel: null, toAt: null, open: false };
+    }
+  }
+  leg.open = !completed; leg.toLabel = completed ? "oxirgi yozuv" : "hozirgacha";
+  if (leg.km > 0 || leg.open) legs.push(leg);
+  const shown = legs.filter((l) => l.km > 0 || l.open);
+  const empty = shown.filter((l) => l.kind === "empty").reduce((s, l) => s + l.km, 0);
+  const loaded = shown.filter((l) => l.kind === "loaded").reduce((s, l) => s + l.km, 0);
+  const total = empty + loaded;
+  return { legs: shown, empty, loaded, total, pct: total > 0 ? (loaded / total) * 100 : null, warns };
+}
+const KIND_LABEL = { empty: "PUSTOY", loaded: "YUK BILAN" };
+function buildKmText(trip, report) {
+  const lines = [`YO'LDA — km hisobi`, `Haydovchi: ${trip.driverLabel}`, `Tyagach: ${trip.tractorNumber || ""}   Prisep: ${trip.trailerNumber || "YO'Q"}`, "",
+    `Pustoy (yuksiz): ${fmt(report.empty)} km`, `Yuk bilan: ${fmt(report.loaded)} km`, `Jami: ${fmt(report.total)} km${report.pct !== null ? ` (yuk bilan ${fmt(report.pct)}%)` : ""}`, ""];
+  report.legs.forEach((l, i) => lines.push(`${i + 1}) ${l.fromLabel} → ${l.toLabel} [${KIND_LABEL[l.kind]}${l.open ? ", davom etmoqda" : ""}]: ${fmt(l.km)} km`));
+  report.warns.forEach((w) => lines.push(`⚠ ${w}`));
+  return lines.join("\n");
+}
 function rowToEvent(row) { return { ...row.data, id: row.id, type: row.type, at: new Date(row.at).getTime(), batchId: row.batch_id || null }; }
 async function fetchTripFull(tripId) {
   const { data: tripRow } = await sb.from("trips").select("*, driver:drivers(first_name,last_name)").eq("id", tripId).single();
@@ -783,6 +824,57 @@ function BaseScreen() {
   );
 }
 
+function KmReport({ trip, derived, report }) {
+  const [copied, setCopied] = useState(false);
+  async function copy() {
+    const text = buildKmText({ driverLabel: trip.driverLabel, tractorNumber: derived.tractorNumber, trailerNumber: derived.trailerNumber }, report);
+    try { await navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch {}
+  }
+  const stat = (label, value, color) => (
+    <div style={{ minWidth: 0 }}>
+      <div style={{ fontFamily: "Inter", fontSize: 10.5, color: COLORS.muted, letterSpacing: 0.4, textTransform: "uppercase" }}>{label}</div>
+      <div style={{ fontFamily: "'Roboto Mono', monospace", fontWeight: 700, fontSize: 19, color, marginTop: 2, whiteSpace: "nowrap" }}>{fmt(value)}<span style={{ fontSize: 11, color: COLORS.muted, marginLeft: 4 }}>km</span></div>
+    </div>
+  );
+  return (
+    <Panel>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, gap: 8 }}>
+        <span style={{ fontFamily: "Oswald", fontSize: 14, fontWeight: 600 }}>Km hisobi</span>
+        <button onClick={copy} style={{ background: COLORS.panel2, border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: "6px 12px", color: COLORS.amber, fontFamily: "Inter", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>{copied ? "Nusxalandi ✓" : "📋 Nusxalash"}</button>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+        {stat("Pustoy", report.empty, COLORS.amber)}
+        {stat("Yuk bilan", report.loaded, COLORS.green)}
+        {stat("Jami", report.total, COLORS.text)}
+      </div>
+      {report.pct !== null && (
+        <div style={{ marginTop: 12 }}>
+          <div style={{ display: "flex", height: 8, borderRadius: 4, overflow: "hidden", background: COLORS.panel2 }} role="img" aria-label={`Yuk bilan ${fmt(report.pct)} foiz`}>
+            <div style={{ width: report.pct + "%", background: COLORS.green }} />
+            <div style={{ flex: 1, background: COLORS.amber }} />
+          </div>
+          <div style={{ fontSize: 11, color: COLORS.muted, marginTop: 5 }}>Yuk bilan: {fmt(report.pct)}% · Pustoy: {fmt(100 - report.pct)}%</div>
+        </div>
+      )}
+      {report.legs.length === 0 && <div style={{ fontSize: 12, color: COLORS.muted, marginTop: 12 }}>Hali km yozuvi yo'q.</div>}
+      {report.legs.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 14 }}>
+          {report.legs.map((l, i) => (
+            <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, background: COLORS.panel2, borderRadius: 8, padding: "10px 12px", borderLeft: `3px solid ${l.kind === "loaded" ? COLORS.green : COLORS.amber}` }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 0.5, color: l.kind === "loaded" ? COLORS.green : COLORS.amber }}>{KIND_LABEL[l.kind]}{l.open ? " · davom etmoqda" : ""}</div>
+                <div style={{ fontSize: 12, color: COLORS.text, marginTop: 3, overflowWrap: "anywhere" }}>{l.fromLabel} <span style={{ color: COLORS.muted }}>→</span> {l.toLabel}</div>
+              </div>
+              <div style={{ fontFamily: "'Roboto Mono', monospace", fontWeight: 700, fontSize: 14, whiteSpace: "nowrap" }}>{fmt(l.km)} km</div>
+            </div>
+          ))}
+        </div>
+      )}
+      {report.warns.map((w, i) => <div key={i} style={{ fontSize: 11.5, color: COLORS.red, marginTop: 8 }}>⚠ {w}</div>)}
+    </Panel>
+  );
+}
+
 function TripDetail({ tripId }) {
   const [trip, setTrip] = useState(null);
   const [openId, setOpenId] = useState(null);
@@ -796,6 +888,7 @@ function TripDetail({ tripId }) {
   const pendingHistory = derived.history.filter((e) => !e.batchId);
   const pendingFiles = computeFiles(pendingHistory);
   const changes = derived.history.filter((e) => e.type in CHANGE_LABELS);
+  const kmReport = computeKmReport(derived.history, trip.startedAt, trip.completed);
 
   function renderFileEvents(f, editableLook) {
     return (<>
@@ -824,6 +917,8 @@ function TripDetail({ tripId }) {
         </div>
         {trip.completed && <div style={{ marginTop: 12, fontSize: 11, color: COLORS.muted }}>Bu reys yakunlangan.</div>}
       </Panel>
+
+      <KmReport trip={trip} derived={derived} report={kmReport} />
 
       {pendingFiles.length > 0 && (
         <div>
