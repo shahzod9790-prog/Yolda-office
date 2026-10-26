@@ -682,7 +682,7 @@ function TripsList({ trips, loading, listTab, setListTab, query, setQuery, onOpe
 // ==================== ASOSIY BAZA: tyagach va prisepler ====================
 // Raqam yagona ko'rinishga keltiriladi (bosh harf, ortiqcha bo'shliqsiz); takrorni tekshirishda bo'shliq va harf kattaligi hisobga olinmaydi.
 const normNum = (s) => String(s || "").trim().replace(/\s+/g, " ").toUpperCase();
-const numKey = (s) => String(s || "").replace(/\s+/g, "").toUpperCase();
+const numKey = (s) => String(s || "").toUpperCase().replace(/[^\p{L}\p{N}]/gu, ""); // bo'shliq, tire va harf kattaligi hisobga olinmaydi
 
 function BaseScreen() {
   const [kind, setKind] = useState("tractors"); // tractors | trailers
@@ -747,7 +747,7 @@ function BaseScreen() {
           <button type="submit" disabled={saving || rows === null || !input.trim()} style={{ flex: "none", display: "flex", alignItems: "center", gap: 6, padding: "0 16px", borderRadius: 8, border: "none", background: COLORS.amber, color: "#1A1300", fontFamily: "Inter", fontWeight: 700, fontSize: 14, cursor: "pointer", opacity: saving || rows === null || !input.trim() ? 0.5 : 1 }}><Plus size={16} />{saving ? "..." : "Qo'shish"}</button>
         </form>
         {msg && <div role="status" style={{ marginTop: 10, fontSize: 12.5, color: msg.ok ? COLORS.green : COLORS.red }}>{msg.text}</div>}
-        <div style={{ marginTop: 10, fontSize: 11, color: COLORS.muted }}>Haydovchilar hozircha raqamni o'zlari yozadi: ular yozgan yangi raqam ham avtomatik shu ro'yxatga tushadi.</div>
+        <div style={{ marginTop: 10, fontSize: 11, color: COLORS.muted }}>Haydovchi ilovada raqamni yozganda shu ro'yxatdan qidiriladi va «Bazada bor / yo'q» deb ko'rsatiladi. Hozircha bazada yo'q raqam bilan ham reys boshlash mumkin — bunda raqam avtomatik shu ro'yxatga tushadi.</div>
       </Panel>
 
       {loadErr && <Panel style={{ color: COLORS.red, fontSize: 13 }}>Ro'yxatni yuklab bo'lmadi. Internetni tekshirib, <button onClick={loadAll} style={{ background: "transparent", border: "none", color: COLORS.amber, fontWeight: 700, cursor: "pointer", fontSize: 13, padding: 0 }}>qayta urining</button>.</Panel>}
