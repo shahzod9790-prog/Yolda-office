@@ -451,6 +451,20 @@ function computeFiles(history) {
   files.forEach((f, i) => { f.number = i + 1; });
   return files;
 }
+// Faylning faqat shartga mos yozuvlari (masalan, bitta jo'natishdagilari). Fayl raqami butun reys bo'yicha saqlanadi.
+function restrictFile(f, pred) {
+  const events = f.events.filter(pred);
+  if (events.length === 0) return null;
+  return { ...f, events, zagruzkas: events.filter((e) => e.type === "zagruzka"), zapravkas: events.filter((e) => e.type === "zapravka"), vigruzkas: events.filter((e) => e.type === "vigruzka"), fromAt: events[0].at, toAt: events[events.length - 1].at };
+}
+// Bitta jo'natishning ichidagi fayllar va transport almashinuvlari
+function batchParts(history, batchId) {
+  const files = computeFiles(history).map((f) => restrictFile(f, (e) => e.batchId === batchId)).filter(Boolean);
+  const changes = history.filter((e) => e.batchId === batchId && !["zagruzka", "zapravka", "vigruzka"].includes(e.type)).sort((a, b) => a.at - b.at);
+  return { files, changes };
+}
+// yozuv id -> fayl raqami (nusxalanadigan matnda "FAYL n" sarlavhasi uchun)
+function fileNoMap(history) { const m = {}; computeFiles(history).forEach((f) => f.events.forEach((e) => { m[e.id] = f.number; })); return m; }
 // ---------------- Km hisobi: pustoy (yuksiz) va yuk bilan masofa ----------------
 // Qoida: reys boshida mashina yuksiz (pustoy). ZAGRUZKA'dan keyin yuk bilan, VIGRUZKA'dan keyin yana pustoy.
 // Har bir yozuvdagi "distance" (oldingi nuqtadan yurilgan masofa) o'sha paytdagi holatga qo'shiladi.
@@ -527,9 +541,11 @@ function formatFieldValue(f, v) {
   if (f.toLowerCase().includes("liters") || f === "adBlue") return `${fmt(v)} l`;
   return v;
 }
-function buildBatchText(trip, events) {
+function buildBatchText(trip, events, fileNo = {}) {
   const lines = [`YO'LDA — yuborilgan ma'lumotlar`, `Haydovchi: ${trip.driverLabel}`, `Tyagach: ${trip.tractorNumber || ""}   Prisep: ${trip.trailerNumber || "YO'Q"}`, ""];
+  let lastNo = null;
   events.forEach((ev) => {
+    if (fileNo[ev.id] && fileNo[ev.id] !== lastNo) { lastNo = fileNo[ev.id]; lines.push(`===== FAYL ${lastNo} =====`, ""); }
     const label = ev.type === "zagruzka" ? "ZAGRUZKA" : ev.type === "zapravka" ? "ZAPRAVKA" : ev.type === "vigruzka" ? "VIGRUZKA" : (CHANGE_LABELS[ev.type] || ev.type);
     lines.push(`[${label}] ${fmtDate(ev.at)}`);
     const fields = BATCH_FIELDS[ev.type] || ["address", "km", "newKm", "motoChas", "loadStatus", "newTractorNumber", "newTrailerNumber"];
@@ -1079,7 +1095,7 @@ function TripDetail({ tripId }) {
 
   const derived = deriveTrip(trip);
   const pendingHistory = derived.history.filter((e) => !e.batchId);
-  const pendingFiles = computeFiles(pendingHistory);
+  const pendingFiles = computeFiles(derived.history).map((f) => restrictFile(f, (e) => !e.batchId)).filter(Boolean); // fayl raqami butun reys bo'yicha
   const changes = derived.history.filter((e) => e.type in CHANGE_LABELS);
   const kmReport = computeKmReport(derived.history, trip.startedAt, trip.completed);
 
@@ -1093,7 +1109,7 @@ function TripDetail({ tripId }) {
   }
 
   async function copyBatch(batch, events) {
-    const text = buildBatchText({ driverLabel: trip.driverLabel, tractorNumber: derived.tractorNumber, trailerNumber: derived.trailerNumber }, events);
+    const text = buildBatchText({ driverLabel: trip.driverLabel, tractorNumber: derived.tractorNumber, trailerNumber: derived.trailerNumber }, events, fileNoMap(derived.history));
     try { await navigator.clipboard.writeText(text); setCopiedId(batch.id); setTimeout(() => setCopiedId(null), 1500); } catch {}
   }
 
@@ -1156,7 +1172,20 @@ function TripDetail({ tripId }) {
                 {isOpen && (
                   <div style={{ padding: "0 16px 16px", borderTop: `1px solid ${COLORS.border}`, paddingTop: 14, display: "flex", flexDirection: "column", gap: 14 }}>
                     <button onClick={() => copyBatch(batch, events)} style={{ alignSelf: "flex-start", background: COLORS.panel2, border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: "8px 14px", color: COLORS.amber, fontFamily: "Inter", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>{copiedId === batch.id ? "Nusxalandi ✓" : "📋 Nusxalash"}</button>
-                    {events.map((ev) => <EventDetail key={ev.id} label={ev.type === "zagruzka" ? "ZAGRUZKA" : ev.type === "zapravka" ? "ZAPRAVKA" : ev.type === "vigruzka" ? "VIGRUZKA" : (CHANGE_LABELS[ev.type] || ev.type)} ev={ev} fields={ev.type === "zagruzka" ? ["address", "km", "distance"] : ev.type === "zapravka" ? ["km", "distance", "tractorLiters", "trailerLiters", "adBlue"] : ev.type === "vigruzka" ? ["address", "km", "distance", "motoChas", "motoChasWorked"] : ["address", "km", "newKm", "motoChas", "loadStatus", "newTractorNumber", "newTrailerNumber"]} />)}
+                    {(() => {
+                      const parts = batchParts(derived.history, batch.id);
+                      const FIELDS = { zagruzka: ["address", "km", "distance"], zapravka: ["km", "distance", "tractorLiters", "trailerLiters", "adBlue"], vigruzka: ["address", "km", "distance", "motoChas", "motoChasWorked"] };
+                      const LABELS = { zagruzka: "ZAGRUZKA", zapravka: "ZAPRAVKA", vigruzka: "VIGRUZKA" };
+                      return (<>
+                        {parts.files.map((f) => (
+                          <div key={f.dayKey} style={{ display: "flex", flexDirection: "column", gap: 12, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 12 }}>
+                            <div style={{ fontFamily: "Oswald", fontSize: 13.5, fontWeight: 600, color: COLORS.amber }}>FAYL {f.number}{f.closed ? "" : " · ochiq"}<div style={{ fontFamily: "Inter", fontSize: 11, color: COLORS.muted, fontWeight: 400, marginTop: 2 }}>{fmtDate(f.fromAt)} → {fmtDate(f.toAt)}</div></div>
+                            {f.events.map((ev) => <EventDetail key={ev.id} label={LABELS[ev.type]} ev={ev} fields={FIELDS[ev.type]} />)}
+                          </div>
+                        ))}
+                        {parts.changes.map((ev) => <EventDetail key={ev.id} label={CHANGE_LABELS[ev.type] || ev.type} ev={ev} fields={["address", "km", "newKm", "motoChas", "loadStatus", "newTractorNumber", "newTrailerNumber"]} />)}
+                      </>);
+                    })()}
                   </div>
                 )}
               </Panel>
