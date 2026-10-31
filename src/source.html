@@ -387,9 +387,24 @@ function PhotoGroupRow({ ev }) {
     )}
   </>);
 }
+function hasPhotos(ev) { return !!(ev.photos?.length > 0 || ev.tractorDieselPhotos?.length > 0 || ev.trailerDieselPhotos?.length > 0 || ev.adBluePhotos?.length > 0 || ev.motoChasPhoto); }
+// Km hisobi qatori ichidagi rasmlar: har bir yozuv (zagruzka/vigruzka/zapravka) o'z nomi va vaqti bilan
+const PHOTO_EVENT_LABEL = { zagruzka: "ZAGRUZKA", vigruzka: "VIGRUZKA", zapravka: "ZAPRAVKA" };
+function LegPhotos({ events }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10, borderTop: `1px solid ${COLORS.border}`, paddingTop: 10 }}>
+      {events.filter(hasPhotos).map((ev) => (
+        <div key={ev.id}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 10.5 }}><span style={{ fontFamily: "Oswald", fontWeight: 600, color: COLORS.amber }}>{PHOTO_EVENT_LABEL[ev.type] || ev.type}</span><span style={{ color: COLORS.muted }}>{fmtDate(ev.at)}</span></div>
+          <PhotoGroupRow ev={ev} />
+        </div>
+      ))}
+    </div>
+  );
+}
 const FIELD_LABELS = { address: "Manzil", km: "Km", newKm: "Km", distance: "Masofa", tractorLiters: "Tyagach diesel", trailerLiters: "Prisep diesel", adBlue: "AdBlue", motoChas: "Motochas", motoChasWorked: "Ishlagan soat", loadStatus: "Yuk holati", newTractorNumber: "Yangi tyagach", newTrailerNumber: "Yangi prisep" };
 const LOAD_LABELS = { S_GRUZ: "S GRUZ", BEZ_GRUZ: "BEZ GRUZ" };
-function EventDetail({ label, ev, fields, standalonePanel }) {
+function EventDetail({ label, ev, fields, standalonePanel, hidePhotos }) {
   const rows = fields.filter((f) => ev[f] !== undefined && ev[f] !== null && ev[f] !== "");
   const content = (
     <>
@@ -400,7 +415,7 @@ function EventDetail({ label, ev, fields, standalonePanel }) {
       <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
         {rows.map((f) => <div key={f} style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}><span style={{ color: COLORS.muted }}>{FIELD_LABELS[f]}</span><span style={{ fontFamily: "'Roboto Mono', monospace", fontWeight: 600 }}>{f === "loadStatus" ? LOAD_LABELS[ev[f]] : f === "km" || f === "distance" || f === "newKm" ? `${fmt(ev[f])} km` : f === "motoChas" || f === "motoChasWorked" ? `${fmt(ev[f])} soat` : f.toLowerCase().includes("liters") || f === "adBlue" ? `${fmt(ev[f])} l` : ev[f]}</span></div>)}
       </div>
-      <PhotoGroupRow ev={ev} />
+      {!hidePhotos && <PhotoGroupRow ev={ev} />}
     </>
   );
   return standalonePanel ? <Panel>{content}</Panel> : <div style={{ background: COLORS.panel2, borderRadius: 8, padding: 12 }}>{content}</div>;
@@ -472,7 +487,7 @@ function fileNoMap(history) { const m = {}; computeFiles(history).forEach((f) =>
 function computeKmReport(history, startedAt, completed) {
   const legs = [], warns = [];
   let state = "empty", ended = false;
-  let leg = { kind: "empty", fromLabel: "Reys boshi", fromAt: startedAt, km: 0, toLabel: null, toAt: null, open: false };
+  let leg = { kind: "empty", fromLabel: "Reys boshi", fromAt: startedAt, km: 0, toLabel: null, toAt: null, open: false, events: [] };
   const close = (toLabel, toAt) => { leg.toLabel = toLabel; leg.toAt = toAt; legs.push(leg); };
   const place = (ev, fallback) => (ev.address && String(ev.address).trim()) || fallback;
   for (const ev of history) {
@@ -481,27 +496,35 @@ function computeKmReport(history, startedAt, completed) {
     if (typeof d !== "number" || isNaN(d)) d = 0;
     if (d < 0) { warns.push(`${fmtDate(ev.at)}: km oldingisidan kichik kiritilgan (${fmt(d)} km) — hisobga olinmadi`); d = 0; }
     leg.km += d;
+    if (["zagruzka", "zapravka", "vigruzka"].includes(ev.type)) leg.events.push(ev); // yozuv (va uning rasmlari) shu qatorga tegishli; qatorni tugatgan yozuv ham o'zida
     if (ev.type === "zagruzka") {
       close(place(ev, "Zagruzka"), ev.at); state = "loaded";
-      leg = { kind: "loaded", fromLabel: place(ev, "Zagruzka"), fromAt: ev.at, km: 0, toLabel: null, toAt: null, open: false };
+      leg = { kind: "loaded", fromLabel: place(ev, "Zagruzka"), fromAt: ev.at, km: 0, toLabel: null, toAt: null, open: false, events: [] };
     } else if (ev.type === "vigruzka") {
       if (state !== "loaded") warns.push(`${fmtDate(ev.at)}: Vigruzka bor, lekin undan oldin Zagruzka kiritilmagan — bu qism pustoy hisoblandi`);
       close(place(ev, "Vigruzka"), ev.at); state = "empty";
-      leg = { kind: "empty", fromLabel: place(ev, "Vigruzka"), fromAt: ev.at, km: 0, toLabel: null, toAt: null, open: false };
+      leg = { kind: "empty", fromLabel: place(ev, "Vigruzka"), fromAt: ev.at, km: 0, toLabel: null, toAt: null, open: false, events: [] };
     } else if (ev.type === "trip_end") {
       // Reys yakunlandi: oxirgi masofa o'sha paytdagi holatga (yuk bilan yoki pustoy) qo'shiladi
       ended = true; close(place(ev, "Reys oxiri"), ev.at);
-      leg = { kind: state, fromLabel: place(ev, "Reys oxiri"), fromAt: ev.at, km: 0, toLabel: null, toAt: null, open: false };
+      leg = { kind: state, fromLabel: place(ev, "Reys oxiri"), fromAt: ev.at, km: 0, toLabel: null, toAt: null, open: false, events: [] };
     }
   }
   const finished = completed || ended;
   leg.open = !finished; leg.toLabel = finished ? "oxirgi yozuv" : "hozirgacha";
   if (leg.km > 0 || leg.open) legs.push(leg);
-  const shown = legs.filter((l) => l.km > 0 || l.open);
+  // 0 km li qator ko'rsatilmaydi, lekin uning yozuvlari (rasmlari) yo'qolmasligi uchun keyingi ko'rinadigan qatorga o'tkaziladi
+  const shown = []; let carry = [];
+  for (const l of legs) {
+    if (l.km > 0 || l.open) { l.events = carry.concat(l.events); carry = []; shown.push(l); }
+    else carry = carry.concat(l.events);
+  }
+  if (carry.length && shown.length) shown[shown.length - 1].events = shown[shown.length - 1].events.concat(carry);
+  const looseEvents = shown.length === 0 ? carry : [];
   const empty = shown.filter((l) => l.kind === "empty").reduce((s, l) => s + l.km, 0);
   const loaded = shown.filter((l) => l.kind === "loaded").reduce((s, l) => s + l.km, 0);
   const total = empty + loaded;
-  return { legs: shown, empty, loaded, total, pct: total > 0 ? (loaded / total) * 100 : null, warns };
+  return { legs: shown, looseEvents, empty, loaded, total, pct: total > 0 ? (loaded / total) * 100 : null, warns };
 }
 const KIND_LABEL = { empty: "PUSTOY", loaded: "YUK BILAN" };
 function buildKmText(trip, report) {
@@ -1066,15 +1089,19 @@ function KmReport({ trip, derived, report }) {
         </div>
       )}
       {report.legs.length === 0 && <div style={{ fontSize: 12, color: COLORS.muted, marginTop: 12 }}>Hali km yozuvi yo'q.</div>}
+      {report.legs.length === 0 && (report.looseEvents || []).some(hasPhotos) && <div style={{ marginTop: 12 }}><LegPhotos events={report.looseEvents} /></div>}
       {report.legs.length > 0 && (
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 14 }}>
           {report.legs.map((l, i) => (
-            <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, background: COLORS.panel2, borderRadius: 8, padding: "10px 12px", borderLeft: `3px solid ${l.kind === "loaded" ? COLORS.green : COLORS.amber}` }}>
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 0.5, color: l.kind === "loaded" ? COLORS.green : COLORS.amber }}>{KIND_LABEL[l.kind]}{l.open ? " · davom etmoqda" : ""}</div>
-                <div style={{ fontSize: 12, color: COLORS.text, marginTop: 3, overflowWrap: "anywhere" }}>{l.fromLabel} <span style={{ color: COLORS.muted }}>→</span> {l.toLabel}</div>
+            <div key={i} style={{ background: COLORS.panel2, borderRadius: 8, padding: "10px 12px", borderLeft: `3px solid ${l.kind === "loaded" ? COLORS.green : COLORS.amber}` }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 0.5, color: l.kind === "loaded" ? COLORS.green : COLORS.amber }}>{KIND_LABEL[l.kind]}{l.open ? " · davom etmoqda" : ""}</div>
+                  <div style={{ fontSize: 12, color: COLORS.text, marginTop: 3, overflowWrap: "anywhere" }}>{l.fromLabel} <span style={{ color: COLORS.muted }}>→</span> {l.toLabel}</div>
+                </div>
+                <div style={{ fontFamily: "'Roboto Mono', monospace", fontWeight: 700, fontSize: 14, whiteSpace: "nowrap" }}>{fmt(l.km)} km</div>
               </div>
-              <div style={{ fontFamily: "'Roboto Mono', monospace", fontWeight: 700, fontSize: 14, whiteSpace: "nowrap" }}>{fmt(l.km)} km</div>
+              {(l.events || []).some(hasPhotos) && <div style={{ marginTop: 10 }}><LegPhotos events={l.events} /></div>}
             </div>
           ))}
         </div>
@@ -1104,7 +1131,7 @@ function TripDetail({ tripId }) {
     const FIELDS = { zagruzka: ["address", "km", "distance"], zapravka: ["km", "distance", "tractorLiters", "trailerLiters", "adBlue"], vigruzka: ["address", "km", "distance", "motoChas", "motoChasWorked"] };
     const LABELS = { zagruzka: "ZAGRUZKA", zapravka: "ZAPRAVKA", vigruzka: "VIGRUZKA" };
     return (<>
-      {f.events.map((z) => <EventDetail key={z.id} label={LABELS[z.type]} ev={z} fields={FIELDS[z.type]} />)}
+      {f.events.map((z) => <EventDetail key={z.id} label={LABELS[z.type]} ev={z} fields={FIELDS[z.type]} hidePhotos />)}
     </>);
   }
 
@@ -1180,7 +1207,7 @@ function TripDetail({ tripId }) {
                         {parts.files.map((f) => (
                           <div key={f.dayKey} style={{ display: "flex", flexDirection: "column", gap: 12, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 12 }}>
                             <div style={{ fontFamily: "Oswald", fontSize: 13.5, fontWeight: 600, color: COLORS.amber }}>FAYL {f.number}{f.closed ? "" : " · ochiq"}<div style={{ fontFamily: "Inter", fontSize: 11, color: COLORS.muted, fontWeight: 400, marginTop: 2 }}>{fmtDate(f.fromAt)} → {fmtDate(f.toAt)}</div></div>
-                            {f.events.map((ev) => <EventDetail key={ev.id} label={LABELS[ev.type]} ev={ev} fields={FIELDS[ev.type]} />)}
+                            {f.events.map((ev) => <EventDetail key={ev.id} label={LABELS[ev.type]} ev={ev} fields={FIELDS[ev.type]} hidePhotos />)}
                           </div>
                         ))}
                         {parts.changes.map((ev) => <EventDetail key={ev.id} label={CHANGE_LABELS[ev.type] || ev.type} ev={ev} fields={["address", "km", "newKm", "motoChas", "loadStatus", "newTractorNumber", "newTrailerNumber"]} />)}
