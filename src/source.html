@@ -843,7 +843,71 @@ function BaseScreen() {
           );
         })}
       </Panel>
+      {ENABLE_TEST_RESET && <TestResetPanel />}
     </div>
+  );
+}
+
+// ---------------- SINOV: reyslarni tozalash ----------------
+// MIJOZGA TOPSHIRISHDAN OLDIN ENABLE_TEST_RESET = false qiling — tugma butunlay yo'qoladi.
+const ENABLE_TEST_RESET = true;
+function TestResetPanel() {
+  const [step, setStep] = useState(0); // 0 yopiq · 1 ogohlantirish · 2 so'zni yozib tasdiqlash
+  const [word, setWord] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null);
+  const NIL = "00000000-0000-0000-0000-000000000000"; // PostgREST filtrsiz o'chirishga yo'l qo'ymaydi; bu shartga hamma qator mos keladi
+  const okWord = word.trim().toUpperCase() === "TOZALASH";
+
+  async function run() {
+    if (busy || !okWord) return;
+    setBusy(true); setMsg(null);
+    try {
+      // Tartib muhim: avval yozuvlar, keyin jo'natishlar, oxirida reyslar
+      const steps = [
+        () => sb.from("trip_events").delete().neq("id", NIL),
+        () => sb.from("trip_sends").delete().neq("id", NIL),
+        () => sb.from("trips").delete().neq("id", NIL),
+        () => sb.from("tractors").update({ status: "free" }).neq("id", NIL),
+        () => sb.from("trailers").update({ status: "free" }).neq("id", NIL),
+      ];
+      for (const s of steps) { const { error } = await s(); if (error) throw error; }
+      const { count } = await sb.from("trips").select("id", { count: "exact", head: true });
+      if (count) throw new Error("Reyslar to'liq o'chmadi (" + count + " ta qoldi)");
+      setMsg({ ok: true, text: "Tozalandi. Sahifa yangilanmoqda..." });
+      setTimeout(() => window.location.reload(), 1200);
+    } catch (e) {
+      setMsg({ ok: false, text: "Tozalab bo'lmadi: " + (e.message || e) });
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Panel style={{ borderColor: COLORS.red + "55" }}>
+      <div style={{ fontFamily: "Oswald", fontWeight: 600, fontSize: 15, color: COLORS.red }}>Sinov asboblari</div>
+      <div style={{ fontSize: 11.5, color: COLORS.muted, marginTop: 4, lineHeight: 1.5 }}>Sinov paytida barcha reys ma'lumotlarini o'chirib, noldan boshlash uchun. Haydovchilar, tyagach va prisep bazasi o'chmaydi.</div>
+      {step === 0 && <button onClick={() => { setStep(1); setMsg(null); }} style={{ marginTop: 12, background: "transparent", border: `1px solid ${COLORS.red}66`, color: COLORS.red, borderRadius: 8, padding: "10px 14px", fontFamily: "Inter", fontWeight: 700, fontSize: 13, cursor: "pointer", display: "flex", alignItems: "center", gap: 8 }}><Trash size={15} />Sinov ma'lumotlarini tozalash</button>}
+      {step === 1 && (
+        <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ background: COLORS.red + "18", borderRadius: 8, padding: 12, fontSize: 12.5, color: COLORS.text, lineHeight: 1.6 }}><b>Diqqat!</b> Barcha reyslar, zagruzka/vigruzka/zapravka yozuvlari va jo'natishlar o'chadi. Buni qaytarib bo'lmaydi.</div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={() => setStep(0)} style={{ flex: 1, background: "transparent", border: `1px solid ${COLORS.border}`, color: COLORS.muted, borderRadius: 8, padding: "10px", fontSize: 13, cursor: "pointer" }}>Bekor qilish</button>
+            <button onClick={() => { setStep(2); setWord(""); }} style={{ flex: 1, background: COLORS.red + "22", border: `1px solid ${COLORS.red}66`, color: COLORS.red, borderRadius: 8, padding: "10px", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>Davom etish</button>
+          </div>
+        </div>
+      )}
+      {step === 2 && (
+        <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ fontSize: 12.5, color: COLORS.text }}>Tasdiqlash uchun <b style={{ color: COLORS.red }}>TOZALASH</b> deb yozing:</div>
+          <input data-nodraft="" value={word} onChange={(e) => setWord(e.target.value)} disabled={busy} autoComplete="off" autoCapitalize="characters" placeholder="TOZALASH" style={{ background: COLORS.panel2, border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: "10px 12px", color: COLORS.text, fontFamily: "'Roboto Mono', monospace", fontSize: 15, outline: "none" }} />
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={() => setStep(0)} disabled={busy} style={{ flex: 1, background: "transparent", border: `1px solid ${COLORS.border}`, color: COLORS.muted, borderRadius: 8, padding: "10px", fontSize: 13, cursor: "pointer" }}>Bekor qilish</button>
+            <button onClick={run} disabled={!okWord || busy} style={{ flex: 1, background: COLORS.red, border: "none", color: "#fff", borderRadius: 8, padding: "10px", fontWeight: 700, fontSize: 13, cursor: "pointer", opacity: !okWord || busy ? 0.45 : 1 }}>{busy ? "O'chirilmoqda..." : "Hammasini o'chirish"}</button>
+          </div>
+        </div>
+      )}
+      {msg && <div role="status" style={{ marginTop: 10, fontSize: 12.5, color: msg.ok ? COLORS.green : COLORS.red }}>{msg.text}</div>}
+    </Panel>
   );
 }
 
