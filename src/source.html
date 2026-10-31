@@ -187,6 +187,7 @@ const Database = (p) => <Icon {...p}><ellipse cx="12" cy="5" rx="9" ry="3"/><pat
 const Plus = (p) => <Icon {...p}><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></Icon>;
 const Trash = (p) => <Icon {...p}><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></Icon>;
 const Refresh = (p) => <Icon {...p}><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></Icon>;
+const ReportIcon = (p) => <Icon {...p}><path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M22 20H2"/></Icon>;
 const PanelLeft = (p) => <Icon {...p}><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></Icon>;
 
 function Panel({ children, style }) { return <div style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 16, ...style }}>{children}</div>; }
@@ -419,6 +420,7 @@ function deriveTrip(trip) {
       case "tractor_end": { item.distance = num(ev.km) - km; km = num(ev.km); break; }
       case "tractor_confirmed": { km = num(ev.newKm); tractorStartKm = km; curTractor = ev.newTractorNumber; break; }
       case "trailer_end": { item.distance = num(ev.km) - km; km = num(ev.km); curTrailer = null; break; }
+      case "trip_end": { item.distance = num(ev.km) - km; km = num(ev.km); break; }
       case "trailer_confirmed": { motoChas = num(ev.motoChas); trailerStartMotoChas = motoChas; curTrailer = ev.newTrailerNumber; break; }
       default: break;
     }
@@ -446,12 +448,12 @@ function computeFiles(history) {
 // Tyagach almashganda eski va yangi tyagach spidometrlari alohida hisoblanadi (deriveTrip shuni ta'minlaydi).
 function computeKmReport(history, startedAt, completed) {
   const legs = [], warns = [];
-  let state = "empty";
+  let state = "empty", ended = false;
   let leg = { kind: "empty", fromLabel: "Reys boshi", fromAt: startedAt, km: 0, toLabel: null, toAt: null, open: false };
   const close = (toLabel, toAt) => { leg.toLabel = toLabel; leg.toAt = toAt; legs.push(leg); };
   const place = (ev, fallback) => (ev.address && String(ev.address).trim()) || fallback;
   for (const ev of history) {
-    if (!["zagruzka", "zapravka", "vigruzka", "tractor_end", "trailer_end"].includes(ev.type)) continue;
+    if (!["zagruzka", "zapravka", "vigruzka", "tractor_end", "trailer_end", "trip_end"].includes(ev.type)) continue;
     let d = ev.distance;
     if (typeof d !== "number" || isNaN(d)) d = 0;
     if (d < 0) { warns.push(`${fmtDate(ev.at)}: km oldingisidan kichik kiritilgan (${fmt(d)} km) — hisobga olinmadi`); d = 0; }
@@ -463,9 +465,14 @@ function computeKmReport(history, startedAt, completed) {
       if (state !== "loaded") warns.push(`${fmtDate(ev.at)}: Vigruzka bor, lekin undan oldin Zagruzka kiritilmagan — bu qism pustoy hisoblandi`);
       close(place(ev, "Vigruzka"), ev.at); state = "empty";
       leg = { kind: "empty", fromLabel: place(ev, "Vigruzka"), fromAt: ev.at, km: 0, toLabel: null, toAt: null, open: false };
+    } else if (ev.type === "trip_end") {
+      // Reys yakunlandi: oxirgi masofa o'sha paytdagi holatga (yuk bilan yoki pustoy) qo'shiladi
+      ended = true; close(place(ev, "Reys oxiri"), ev.at);
+      leg = { kind: state, fromLabel: place(ev, "Reys oxiri"), fromAt: ev.at, km: 0, toLabel: null, toAt: null, open: false };
     }
   }
-  leg.open = !completed; leg.toLabel = completed ? "oxirgi yozuv" : "hozirgacha";
+  const finished = completed || ended;
+  leg.open = !finished; leg.toLabel = finished ? "oxirgi yozuv" : "hozirgacha";
   if (leg.km > 0 || leg.open) legs.push(leg);
   const shown = legs.filter((l) => l.km > 0 || l.open);
   const empty = shown.filter((l) => l.kind === "empty").reduce((s, l) => s + l.km, 0);
@@ -544,9 +551,10 @@ function saveSideCollapsed(v) { try { localStorage.setItem("yolda_office_side", 
 
 function App() {
   const wide = useWide();
-  const [section, setSection] = useState("trips"); // trips | base
+  const [section, setSection] = useState("trips"); // trips | report | base
   const [view, setView] = useState("list"); // (telefon) list | detail
   const [trips, setTrips] = useState(null);
+  const [kmMap, setKmMap] = useState(null); // driver_id -> shu oydagi yuk bilan / pustoy km
   const [listTab, setListTab] = useState("active");
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState(null);
@@ -556,8 +564,11 @@ function App() {
 
   async function loadList() {
     // Ro'yxat uchun rasmlar kerak emas — faqat kerakli ustunlar yuklanadi (tezroq)
-    const { data } = await sb.from("trips").select("id,started_at,tractor_number,trailer_number,completed,driver:drivers(first_name,last_name)").order("started_at", { ascending: false });
+    const kmP = fetchKmReport(new Date()).catch(() => null); // xato bo'lsa ro'yxat baribir ishlaydi (km qatori ko'rinmaydi)
+    const { data } = await sb.from("trips").select("id,driver_id,started_at,tractor_number,trailer_number,completed,driver:drivers(first_name,last_name)").order("started_at", { ascending: false });
     setTrips(data || []);
+    const km = await kmP;
+    if (km) { const m = {}; km.forEach((r) => { m[r.driverId] = r; }); setKmMap(m); }
   }
   useEffect(() => { loadList(); }, []);
 
@@ -602,18 +613,19 @@ function App() {
           </div>
           <nav style={{ display: "flex", flexDirection: "column", gap: 4, padding: "4px 10px 10px" }}>
             {navItem("trips", "Reyslar", ListIcon)}
+            {navItem("report", "Hisobot", ReportIcon)}
             {navItem("base", "Asosiy baza", Database)}
           </nav>
           {!collapsed && section === "trips" && (
             <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", borderTop: `1px solid ${COLORS.border}` }}>
-              <CompactTrips trips={filtered} loading={trips === null} listTab={listTab} setListTab={setListTab} query={query} setQuery={setQuery} selectedId={selectedId}
+              <CompactTrips kmMap={kmMap} trips={filtered} loading={trips === null} listTab={listTab} setListTab={setListTab} query={query} setQuery={setQuery} selectedId={selectedId}
                 onOpen={setSelectedId} onRefresh={() => { loadList(); setTick((n) => n + 1); }} />
             </div>
           )}
         </aside>
         <main className="thin-scroll" style={{ flex: 1, minWidth: 0, overflowY: "auto" }}>
           <div style={{ maxWidth: 820, margin: "0 auto", padding: "22px 28px 48px" }}>
-            {section === "base" ? <BaseScreen /> : selectedId ? <TripDetail key={selectedId + ":" + tick} tripId={selectedId} /> : (
+            {section === "base" ? <BaseScreen /> : section === "report" ? <ReportScreen /> : selectedId ? <TripDetail key={selectedId + ":" + tick} tripId={selectedId} /> : (
               <Panel style={{ textAlign: "center", padding: "56px 20px", color: COLORS.muted, fontSize: 14 }}>
                 {collapsed ? <>Reyslar ro'yxatini ochish uchun chapdagi <b style={{ color: COLORS.text }}>Reyslar</b> tugmasini bosing.</> : <>Chap tomondagi ro'yxatdan reysni tanlang.</>}
               </Panel>
@@ -638,9 +650,9 @@ function App() {
       </div>
 
       <div style={{ maxWidth: 560, margin: "0 auto", padding: "16px 16px 40px" }}>
-        {!inDetail && <div style={{ marginBottom: 14 }}><SegmentedChoice options={[{ id: "trips", label: "Reyslar" }, { id: "base", label: "Asosiy baza" }]} value={section} onChange={setSection} /></div>}
-        {section === "base" ? <BaseScreen /> : view === "list" ? (
-          <TripsList trips={filtered} loading={trips === null} listTab={listTab} setListTab={setListTab} query={query} setQuery={setQuery} onOpen={(id) => { setSelectedId(id); setView("detail"); }} />
+        {!inDetail && <div style={{ marginBottom: 14 }}><SegmentedChoice options={[{ id: "trips", label: "Reyslar" }, { id: "report", label: "Hisobot" }, { id: "base", label: "Asosiy baza" }]} value={section} onChange={setSection} /></div>}
+        {section === "base" ? <BaseScreen /> : section === "report" ? <ReportScreen /> : view === "list" ? (
+          <TripsList kmMap={kmMap} trips={filtered} loading={trips === null} listTab={listTab} setListTab={setListTab} query={query} setQuery={setQuery} onOpen={(id) => { setSelectedId(id); setView("detail"); }} />
         ) : (
           <TripDetail tripId={selectedId} />
         )}
@@ -650,7 +662,7 @@ function App() {
 }
 
 // Kompyuterdagi chap panel uchun ixcham ro'yxat
-function CompactTrips({ trips, loading, listTab, setListTab, query, setQuery, selectedId, onOpen, onRefresh }) {
+function CompactTrips({ kmMap, trips, loading, listTab, setListTab, query, setQuery, selectedId, onOpen, onRefresh }) {
   return (
     <>
       <div style={{ padding: "12px 12px 8px", display: "flex", flexDirection: "column", gap: 8 }}>
@@ -678,6 +690,7 @@ function CompactTrips({ trips, loading, listTab, setListTab, query, setQuery, se
               <div style={{ fontSize: 11.5, color: COLORS.muted, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                 <b style={{ color: COLORS.text, fontWeight: 600 }}>{t.tractor_number}</b> · <b style={{ color: t.trailer_number ? COLORS.text : COLORS.red, fontWeight: 600 }}>{t.trailer_number || "YO'Q"}</b>
               </div>
+              <KmLine kmMap={kmMap} driverId={t.driver_id} />
               <div style={{ fontSize: 10.5, color: COLORS.muted, marginTop: 1 }}>{fmtDate(t.started_at)}</div>
             </button>
           );
@@ -687,7 +700,7 @@ function CompactTrips({ trips, loading, listTab, setListTab, query, setQuery, se
   );
 }
 
-function TripsList({ trips, loading, listTab, setListTab, query, setQuery, onOpen }) {
+function TripsList({ kmMap, trips, loading, listTab, setListTab, query, setQuery, onOpen }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <SegmentedChoice options={[{ id: "active", label: "Faol reyslar" }, { id: "history", label: "Tarix" }]} value={listTab} onChange={setListTab} />
@@ -707,6 +720,7 @@ function TripsList({ trips, loading, listTab, setListTab, query, setQuery, onOpe
               <div style={{ fontSize: 11.5, color: COLORS.muted, marginTop: 3 }}>
                 Tyagach: <b style={{ color: COLORS.text }}>{t.tractor_number}</b> · Prisep: <b style={{ color: t.trailer_number ? COLORS.text : COLORS.red }}>{t.trailer_number || "YO'Q"}</b>
               </div>
+              <KmLine kmMap={kmMap} driverId={t.driver_id} />
               <div style={{ fontSize: 10.5, color: COLORS.muted, marginTop: 2 }}>Boshlangan: {fmtDate(t.started_at)}</div>
             </div>
             <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
@@ -820,6 +834,112 @@ function BaseScreen() {
           );
         })}
       </Panel>
+    </div>
+  );
+}
+
+// ---------------- Oylik km: haydovchi bo'yicha (baza funksiyasi km_report) ----------------
+const MONTHS_UZ = ["Yanvar", "Fevral", "Mart", "Aprel", "May", "Iyun", "Iyul", "Avgust", "Sentabr", "Oktyabr", "Noyabr", "Dekabr"];
+function monthRange(d) {
+  const a = new Date(d.getFullYear(), d.getMonth(), 1), b = new Date(d.getFullYear(), d.getMonth() + 1, 1);
+  return { from: a.toISOString(), to: b.toISOString(), key: `${a.getFullYear()}-${String(a.getMonth() + 1).padStart(2, "0")}`, label: `${MONTHS_UZ[a.getMonth()]} ${a.getFullYear()}` };
+}
+async function fetchKmReport(date) {
+  const r = monthRange(date);
+  const { data, error } = await sb.rpc("km_report", { p_from: r.from, p_to: r.to });
+  if (error) throw error;
+  return (data || []).map((x) => ({ driverId: x.driver_id, name: `${x.first_name} ${x.last_name}`, loaded: Number(x.loaded_km) || 0, empty: Number(x.empty_km) || 0, trips: x.trips_count || 0, unsent: x.unsent_count || 0, active: x.active_trips || 0 }));
+}
+// Ro'yxatdagi qatorda haydovchining shu oydagi yuk bilan / pustoy kmi (ichiga kirmasdan ko'rinadi)
+function KmLine({ kmMap, driverId }) {
+  if (!kmMap) return null;
+  const k = kmMap[driverId] || { loaded: 0, empty: 0 };
+  return <div data-km-line="" style={{ fontSize: 11, marginTop: 3, color: COLORS.muted }}>Shu oy: <span style={{ color: COLORS.green, fontWeight: 600 }}>yuk bilan {fmt(k.loaded)}</span> · <span style={{ color: COLORS.amber, fontWeight: 600 }}>pustoy {fmt(k.empty)}</span> km</div>;
+}
+function reportTable(rows) {
+  const head = ["Haydovchi", "Yuk bilan (km)", "Pustoy (km)", "Jami (km)", "Yuk bilan (%)", "Reyslar", "Yuborilmagan yozuvlar", "Faol reys"];
+  const body = rows.map((r) => { const t = r.loaded + r.empty; return [r.name, r.loaded, r.empty, t, t > 0 ? Math.round((r.loaded / t) * 100) : 0, r.trips, r.unsent, r.active]; });
+  const L = rows.reduce((s, r) => s + r.loaded, 0), E = rows.reduce((s, r) => s + r.empty, 0), T = L + E;
+  body.push(["JAMI", L, E, T, T > 0 ? Math.round((L / T) * 100) : 0, rows.reduce((s, r) => s + r.trips, 0), rows.reduce((s, r) => s + r.unsent, 0), rows.reduce((s, r) => s + r.active, 0)]);
+  return [head, ...body];
+}
+function downloadText(name, text) {
+  const blob = new Blob(["\ufeff" + text], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob); const a = document.createElement("a");
+  a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 3000);
+}
+function ReportScreen() {
+  const [month, setMonth] = useState(() => { const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), 1); });
+  const [res, setRes] = useState({ key: null, rows: null, err: false }); const [copied, setCopied] = useState(false);
+  const seq = useRef(0);
+  const range = monthRange(month);
+  const nowM = new Date(); const isCurrent = month.getFullYear() === nowM.getFullYear() && month.getMonth() === nowM.getMonth();
+  // Natija oy bilan birga saqlanadi: oy almashganda eski oyning raqamlari yangi oy nomi ostida bir lahza ham ko'rinmaydi
+  const fresh = res.key === range.key;
+  const rows = fresh && !res.err ? res.rows : null; const err = fresh && res.err;
+  async function load() {
+    const my = ++seq.current; const k = range.key; setRes({ key: null, rows: null, err: false });
+    try { const r = await fetchKmReport(month); if (my === seq.current) setRes({ key: k, rows: r, err: false }); } catch { if (my === seq.current) setRes({ key: k, rows: null, err: true }); }
+  }
+  useEffect(() => { setCopied(false); load(); }, [month.getTime()]);
+  const shift = (n) => setMonth(new Date(month.getFullYear(), month.getMonth() + n, 1));
+  const L = (rows || []).reduce((s, r) => s + r.loaded, 0), E = (rows || []).reduce((s, r) => s + r.empty, 0), T = L + E;
+  const open = (rows || []).filter((r) => r.unsent > 0 || r.active > 0).length;
+  async function copy() { try { await navigator.clipboard.writeText(reportTable(rows).map((r) => r.join("\t")).join("\n")); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch {} }
+  function csv() { const q = (v) => { const t = String(v); return /[;"\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; }; downloadText(`yolda-km-hisobot-${range.key}.csv`, reportTable(rows).map((r) => r.map(q).join(";")).join("\r\n")); }
+  const navBtn = (label, onClick, disabled) => <button aria-label={label} onClick={onClick} disabled={disabled} className="hov" style={{ background: COLORS.panel2, border: `1px solid ${COLORS.border}`, borderRadius: 8, width: 38, height: 38, color: COLORS.text, display: "flex", alignItems: "center", justifyContent: "center", cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.4 : 1 }}>{label === "Oldingi oy" ? <ChevronLeft size={18} /> : <ChevronRight size={18} />}</button>;
+  const stat = (label, value, color) => (<div style={{ minWidth: 0 }}><div style={{ fontSize: 10, color: COLORS.muted, letterSpacing: 0.4, textTransform: "uppercase" }}>{label}</div><div style={{ fontFamily: "'Roboto Mono', monospace", fontWeight: 700, fontSize: 15, color, marginTop: 2, whiteSpace: "nowrap" }}>{value}</div></div>);
+  const btnStyle = { background: COLORS.panel2, border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: "8px 14px", color: COLORS.amber, fontFamily: "Inter", fontSize: 12.5, fontWeight: 600, cursor: "pointer" };
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ fontFamily: "Oswald", fontWeight: 700, fontSize: 20, letterSpacing: 0.4 }}>Oylik hisobot</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        {navBtn("Oldingi oy", () => shift(-1))}
+        <div data-month-label="" style={{ minWidth: 150, textAlign: "center", fontFamily: "Oswald", fontSize: 16, fontWeight: 600 }}>{range.label}</div>
+        {navBtn("Keyingi oy", () => shift(1), isCurrent)}
+        {!isCurrent && <button onClick={() => { const n = new Date(); setMonth(new Date(n.getFullYear(), n.getMonth(), 1)); }} style={btnStyle}>Shu oy</button>}
+        <button aria-label="Yangilash" title="Yangilash" className="hov" onClick={load} style={{ marginLeft: "auto", background: COLORS.panel2, border: `1px solid ${COLORS.border}`, borderRadius: 8, width: 38, height: 38, color: COLORS.muted, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}><Refresh size={16} /></button>
+      </div>
+      <div style={{ fontSize: 11.5, color: COLORS.muted, lineHeight: 1.5 }}>Yozuv qaysi oyda kiritilgan bo'lsa, kilometr o'sha oyga qo'shiladi. Reysni yakunlash va hamma yozuvlarni jo'natish oy tugamasdan bajarilishi kerak.</div>
+
+      {err && <Panel style={{ color: COLORS.red, fontSize: 13 }}>Hisobotni yuklab bo'lmadi. Internetni tekshirib, «Yangilash» ni bosing.</Panel>}
+      {!err && rows === null && <Panel style={{ textAlign: "center", padding: "30px 20px", color: COLORS.muted, fontSize: 13 }}>Yuklanmoqda...</Panel>}
+      {rows && rows.length === 0 && <Panel style={{ textAlign: "center", padding: "30px 20px", color: COLORS.muted, fontSize: 13 }}>Bu oyda hech qanday km yozuvi yo'q.</Panel>}
+      {rows && rows.length > 0 && (<>
+        <Panel>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+            <span style={{ fontFamily: "Oswald", fontSize: 14, fontWeight: 600 }}>Jami — {range.label}</span>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={copy} style={btnStyle}>{copied ? "Nusxalandi ✓" : "📋 Excel uchun nusxalash"}</button>
+              <button onClick={csv} style={btnStyle}>⬇ CSV</button>
+            </div>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0,1fr))", gap: 8 }}>
+            {stat("Yuk bilan", `${fmt(L)} km`, COLORS.green)}{stat("Pustoy", `${fmt(E)} km`, COLORS.amber)}{stat("Jami", `${fmt(T)} km`, COLORS.text)}{stat("Yuk bilan %", T > 0 ? `${fmt((L / T) * 100)}%` : "—", COLORS.text)}
+          </div>
+          <div style={{ fontSize: 11.5, marginTop: 10, color: open > 0 ? COLORS.amber : COLORS.green }}>{open > 0 ? `⚠ ${open} ta haydovchining hisoboti hali yopilmagan (yuborilmagan yozuv yoki faol reys bor)` : "✓ Barcha haydovchilarning hisoboti yopilgan"}</div>
+        </Panel>
+        {rows.map((r) => {
+          const t = r.loaded + r.empty;
+          return (
+            <Panel key={r.driverId} style={{ padding: 14 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+                <span style={{ fontFamily: "Oswald", fontSize: 15, fontWeight: 600 }}>{r.name}</span>
+                <span style={{ fontSize: 11, color: COLORS.muted, whiteSpace: "nowrap" }}>{r.trips} ta reys</span>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0,1fr))", gap: 8, marginTop: 10 }}>
+                {stat("Yuk bilan", `${fmt(r.loaded)}`, COLORS.green)}{stat("Pustoy", `${fmt(r.empty)}`, COLORS.amber)}{stat("Jami", `${fmt(t)}`, COLORS.text)}{stat("Yuk %", t > 0 ? `${fmt((r.loaded / t) * 100)}%` : "—", COLORS.text)}
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10, fontSize: 11 }}>
+                {r.unsent > 0 && <span style={{ color: COLORS.amber, background: COLORS.amber + "18", borderRadius: 20, padding: "3px 9px", fontWeight: 600 }}>⚠ {r.unsent} ta yozuv yuborilmagan</span>}
+                {r.active > 0 && <span style={{ color: COLORS.muted, background: COLORS.muted + "22", borderRadius: 20, padding: "3px 9px", fontWeight: 600 }}>Reys davom etmoqda</span>}
+                {r.unsent === 0 && r.active === 0 && <span style={{ color: COLORS.green, background: COLORS.green + "18", borderRadius: 20, padding: "3px 9px", fontWeight: 600 }}>✓ Yopilgan</span>}
+              </div>
+            </Panel>
+          );
+        })}
+      </>)}
     </div>
   );
 }
