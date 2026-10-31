@@ -390,21 +390,22 @@ function PhotoGroupRow({ ev }) {
 function hasPhotos(ev) { return !!(ev.photos?.length > 0 || ev.tractorDieselPhotos?.length > 0 || ev.trailerDieselPhotos?.length > 0 || ev.adBluePhotos?.length > 0 || ev.motoChasPhoto); }
 // Km hisobi qatori ichidagi rasmlar: har bir yozuv (zagruzka/vigruzka/zapravka) o'z nomi va vaqti bilan
 const PHOTO_EVENT_LABEL = { zagruzka: "ZAGRUZKA", vigruzka: "VIGRUZKA", zapravka: "ZAPRAVKA" };
-function LegPhotos({ events }) {
+const EVENT_FIELDS = { zagruzka: ["address", "km", "distance"], zapravka: ["km", "distance", "tractorLiters", "trailerLiters", "adBlue"], vigruzka: ["address", "km", "distance", "motoChas", "motoChasWorked"] };
+// Km hisobi qatori ichidagi yozuvlar: har biri to'liq ma'lumoti (manzil, km, masofa, motochas...) va rasmlari bilan
+function LegEvents({ events }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10, borderTop: `1px solid ${COLORS.border}`, paddingTop: 10 }}>
-      {events.filter(hasPhotos).map((ev) => (
-        <div key={ev.id}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 10.5 }}><span style={{ fontFamily: "Oswald", fontWeight: 600, color: COLORS.amber }}>{PHOTO_EVENT_LABEL[ev.type] || ev.type}</span><span style={{ color: COLORS.muted }}>{fmtDate(ev.at)}</span></div>
-          <PhotoGroupRow ev={ev} />
-        </div>
-      ))}
+    <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 10 }}>
+      {events.map((ev) => <EventDetail key={ev.id} label={PHOTO_EVENT_LABEL[ev.type] || ev.type} ev={ev} fields={EVENT_FIELDS[ev.type] || ["address", "km"]} bare />)}
     </div>
   );
 }
+// Pastdagi fayl/jo'natish kartalarida qisqa qator (batafsil ma'lumot va rasmlar tepadagi Km hisobida)
+function EventLine({ label, ev }) {
+  return <div style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 12 }}><span style={{ fontFamily: "Oswald", fontWeight: 600, color: COLORS.amber }}>{label}</span><span style={{ color: COLORS.muted }}>{fmtDate(ev.at)}</span></div>;
+}
 const FIELD_LABELS = { address: "Manzil", km: "Km", newKm: "Km", distance: "Masofa", tractorLiters: "Tyagach diesel", trailerLiters: "Prisep diesel", adBlue: "AdBlue", motoChas: "Motochas", motoChasWorked: "Ishlagan soat", loadStatus: "Yuk holati", newTractorNumber: "Yangi tyagach", newTrailerNumber: "Yangi prisep" };
 const LOAD_LABELS = { S_GRUZ: "S GRUZ", BEZ_GRUZ: "BEZ GRUZ" };
-function EventDetail({ label, ev, fields, standalonePanel, hidePhotos }) {
+function EventDetail({ label, ev, fields, standalonePanel, hidePhotos, bare }) {
   const rows = fields.filter((f) => ev[f] !== undefined && ev[f] !== null && ev[f] !== "");
   const content = (
     <>
@@ -418,6 +419,7 @@ function EventDetail({ label, ev, fields, standalonePanel, hidePhotos }) {
       {!hidePhotos && <PhotoGroupRow ev={ev} />}
     </>
   );
+  if (bare) return <div style={{ borderTop: `1px solid ${COLORS.border}`, paddingTop: 10 }}>{content}</div>;
   return standalonePanel ? <Panel>{content}</Panel> : <div style={{ background: COLORS.panel2, borderRadius: 8, padding: 12 }}>{content}</div>;
 }
 
@@ -1089,7 +1091,7 @@ function KmReport({ trip, derived, report }) {
         </div>
       )}
       {report.legs.length === 0 && <div style={{ fontSize: 12, color: COLORS.muted, marginTop: 12 }}>Hali km yozuvi yo'q.</div>}
-      {report.legs.length === 0 && (report.looseEvents || []).some(hasPhotos) && <div style={{ marginTop: 12 }}><LegPhotos events={report.looseEvents} /></div>}
+      {report.legs.length === 0 && (report.looseEvents || []).length > 0 && <LegEvents events={report.looseEvents} />}
       {report.legs.length > 0 && (
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 14 }}>
           {report.legs.map((l, i) => (
@@ -1101,7 +1103,7 @@ function KmReport({ trip, derived, report }) {
                 </div>
                 <div style={{ fontFamily: "'Roboto Mono', monospace", fontWeight: 700, fontSize: 14, whiteSpace: "nowrap" }}>{fmt(l.km)} km</div>
               </div>
-              {(l.events || []).some(hasPhotos) && <div style={{ marginTop: 10 }}><LegPhotos events={l.events} /></div>}
+              {(l.events || []).length > 0 && <LegEvents events={l.events} />}
             </div>
           ))}
         </div>
@@ -1131,7 +1133,7 @@ function TripDetail({ tripId }) {
     const FIELDS = { zagruzka: ["address", "km", "distance"], zapravka: ["km", "distance", "tractorLiters", "trailerLiters", "adBlue"], vigruzka: ["address", "km", "distance", "motoChas", "motoChasWorked"] };
     const LABELS = { zagruzka: "ZAGRUZKA", zapravka: "ZAPRAVKA", vigruzka: "VIGRUZKA" };
     return (<>
-      {f.events.map((z) => <EventDetail key={z.id} label={LABELS[z.type]} ev={z} fields={FIELDS[z.type]} hidePhotos />)}
+      {f.events.map((z) => <EventLine key={z.id} label={LABELS[z.type]} ev={z} />)}
     </>);
   }
 
@@ -1207,7 +1209,7 @@ function TripDetail({ tripId }) {
                         {parts.files.map((f) => (
                           <div key={f.dayKey} style={{ display: "flex", flexDirection: "column", gap: 12, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 12 }}>
                             <div style={{ fontFamily: "Oswald", fontSize: 13.5, fontWeight: 600, color: COLORS.amber }}>FAYL {f.number}{f.closed ? "" : " · ochiq"}<div style={{ fontFamily: "Inter", fontSize: 11, color: COLORS.muted, fontWeight: 400, marginTop: 2 }}>{fmtDate(f.fromAt)} → {fmtDate(f.toAt)}</div></div>
-                            {f.events.map((ev) => <EventDetail key={ev.id} label={LABELS[ev.type]} ev={ev} fields={FIELDS[ev.type]} hidePhotos />)}
+                            {f.events.map((ev) => <EventLine key={ev.id} label={LABELS[ev.type]} ev={ev} />)}
                           </div>
                         ))}
                         {parts.changes.map((ev) => <EventDetail key={ev.id} label={CHANGE_LABELS[ev.type] || ev.type} ev={ev} fields={["address", "km", "newKm", "motoChas", "loadStatus", "newTractorNumber", "newTrailerNumber"]} />)}
