@@ -661,6 +661,41 @@ function OfficeLogin({ onIn, note }) {
   );
 }
 
+const KeyIcon = (p) => <Icon {...p}><circle cx="7.5" cy="15.5" r="4.5"/><path d="M10.7 12.3L21 2"/><path d="M17 6l3 3"/><path d="M14 9l2 2"/></Icon>;
+// Ofis xodimi o'z parolini o'zgartiradi (vaqtinchalik parolni birinchi kirishdan keyin almashtirish uchun)
+function PasswordDialog({ onClose }) {
+  const [p1, setP1] = useState(""); const [p2, setP2] = useState(""); const [busy, setBusy] = useState(false); const [err, setErr] = useState(null); const [done, setDone] = useState(false);
+  const valid = p1.length >= 8 && p1 === p2 && !busy;
+  async function save() {
+    if (!valid) return;
+    setBusy(true); setErr(null);
+    try {
+      const { error } = await withTimeout(sb.auth.updateUser({ password: p1 }), 15000);
+      if (error) setErr(/same|different/i.test(error.message || "") ? "Yangi parol eskisidan farq qilishi kerak." : /weak|short|least/i.test(error.message || "") ? "Parol juda oddiy yoki qisqa. Uzunroq qiling." : "Parolni o'zgartirib bo'lmadi: " + error.message);
+      else setDone(true);
+    } catch (e) { setErr(e && e.message === "timeout" ? "Internet sekin yoki yo'q. Qayta urinib ko'ring." : "Parolni o'zgartirib bo'lmadi: " + (e && e.message)); }
+    finally { setBusy(false); }
+  }
+  const inp = { width: "100%", boxSizing: "border-box", background: COLORS.panel2, border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: "10px 12px", color: COLORS.text, fontFamily: "'Roboto Mono', monospace", fontSize: 15, outline: "none" };
+  return (
+    <div role="dialog" aria-label="Parolni o'zgartirish" style={{ position: "fixed", inset: 0, zIndex: 80, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: 18, width: "100%", maxWidth: 380, display: "flex", flexDirection: "column", gap: 12, fontFamily: "Inter", color: COLORS.text }}>
+        <div style={{ fontFamily: "Oswald", fontSize: 17, fontWeight: 600 }}>Parolni o'zgartirish</div>
+        {done ? (<>
+          <div role="status" style={{ fontSize: 13.5, color: COLORS.green, lineHeight: 1.5 }}>✓ Parol o'zgartirildi. Keyingi kirishda yangi paroldan foydalaning.</div>
+          <SmallBtn tone="primary" onClick={onClose}>Yopish</SmallBtn>
+        </>) : (<>
+          <label style={{ display: "flex", flexDirection: "column", gap: 6 }}><span style={{ fontSize: 12.5, color: COLORS.muted }}>Yangi parol (kamida 8 belgi)</span><input type="password" autoComplete="new-password" value={p1} onChange={(e) => setP1(e.target.value)} style={inp} /></label>
+          <label style={{ display: "flex", flexDirection: "column", gap: 6 }}><span style={{ fontSize: 12.5, color: COLORS.muted }}>Yangi parolni takrorlang</span><input type="password" autoComplete="new-password" value={p2} onChange={(e) => setP2(e.target.value)} onKeyDown={(e) => e.key === "Enter" && save()} style={inp} /></label>
+          {p2.length > 0 && p1 !== p2 && <div style={{ fontSize: 12.5, color: COLORS.amber }}>Ikkala parol bir xil emas.</div>}
+          {err && <div role="alert" style={{ fontSize: 12.5, color: COLORS.red, lineHeight: 1.5 }}>{err}</div>}
+          <div style={{ display: "flex", gap: 8 }}><SmallBtn tone="primary" disabled={!valid} onClick={save}>{busy ? "Saqlanmoqda..." : "Saqlash"}</SmallBtn><SmallBtn onClick={onClose}>Bekor qilish</SmallBtn></div>
+        </>)}
+      </div>
+    </div>
+  );
+}
+
 function SmallBtn({ children, onClick, tone = "ghost", disabled }) {
   const st = { primary: { background: COLORS.amber, color: "#1A1300", border: "none" }, green: { background: COLORS.green + "22", color: COLORS.green, border: `1px solid ${COLORS.green}66` }, danger: { background: "transparent", color: COLORS.red, border: `1px solid ${COLORS.red}55` }, ghost: { background: "transparent", color: COLORS.text, border: `1px solid ${COLORS.border}` } }[tone];
   return <button onClick={onClick} disabled={disabled} style={{ ...st, padding: "8px 14px", borderRadius: 8, fontFamily: "Inter", fontWeight: 600, fontSize: 13, opacity: disabled ? 0.5 : 1, cursor: disabled ? "not-allowed" : "pointer" }}>{children}</button>;
@@ -847,6 +882,7 @@ function Root() {
 function App({ user, onLogout }) {
   const wide = useWide();
   const [section, setSection] = useState("trips"); // trips | report | requests | drivers | base
+  const [pwOpen, setPwOpen] = useState(false);
   const [pendingCount, setPendingCount] = useState(0); // kutilayotgan haydovchi so'rovlari soni (menyuda belgi)
   async function loadPending() { try { const { data, error } = await sb.from("driver_requests").select("id").eq("status", "pending"); if (!error && data) setPendingCount(data.length); } catch {} }
   useEffect(() => { loadPending(); const iv = setInterval(() => { if (!document.hidden) loadPending(); }, 30000); return () => clearInterval(iv); }, []);
@@ -924,10 +960,12 @@ function App({ user, onLogout }) {
           )}
           {!(section === "trips" && !collapsed) && <div style={{ flex: 1 }} />}
           <div style={{ padding: collapsed ? "10px 0" : "10px 12px", borderTop: `1px solid ${COLORS.border}`, display: "flex", flexDirection: collapsed ? "column" : "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-            {!collapsed && <div style={{ minWidth: 0, fontSize: 11.5, color: COLORS.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={user && user.email}>{user && user.email}</div>}
+            {!collapsed && <div style={{ minWidth: 0, flex: 1, fontSize: 11.5, color: COLORS.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={user && user.email}>{user && user.email}</div>}
+            <button aria-label="Parolni o'zgartirish" title="Parolni o'zgartirish" className="hov" onClick={() => setPwOpen(true)} style={{ flex: "none", background: "transparent", border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: "7px", color: COLORS.muted, display: "flex", alignItems: "center", cursor: "pointer" }}><KeyIcon size={14} /></button>
             <button aria-label="Chiqish" title="Chiqish" className="hov" onClick={onLogout} style={{ flex: "none", background: "transparent", border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: collapsed ? "7px" : "7px 10px", color: COLORS.muted, display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter", fontWeight: 600, fontSize: 12, cursor: "pointer" }}><LogOut size={14} />{!collapsed && "Chiqish"}</button>
           </div>
         </aside>
+        {pwOpen && <PasswordDialog onClose={() => setPwOpen(false)} />}
         <main className="thin-scroll" style={{ flex: 1, minWidth: 0, overflowY: "auto" }}>
           <div style={{ maxWidth: 820, margin: "0 auto", padding: "22px 28px 48px" }}>
             {section === "base" ? <BaseScreen /> : section === "report" ? <ReportScreen /> : section === "requests" ? <RequestsScreen onChanged={loadPending} /> : section === "drivers" ? <DriversScreen /> : selectedId ? <TripDetail key={selectedId + ":" + tick} tripId={selectedId} /> : (
@@ -952,9 +990,11 @@ function App({ user, onLogout }) {
         )}
         {logo}
         <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontFamily: "Oswald", fontWeight: 700, fontSize: 19, letterSpacing: 0.5 }}>YO'LDA — OFIS</div><div style={{ fontSize: 11, color: COLORS.muted, marginTop: -2 }}>barcha haydovchilar va reyslar</div></div>
+        <button aria-label="Parolni o'zgartirish" onClick={() => setPwOpen(true)} style={{ flex: "none", background: "transparent", border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: "7px", color: COLORS.muted, display: "flex", alignItems: "center", cursor: "pointer" }}><KeyIcon size={15} /></button>
         <button aria-label="Chiqish" onClick={onLogout} style={{ flex: "none", background: "transparent", border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: "7px 10px", color: COLORS.muted, display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter", fontWeight: 600, fontSize: 12, cursor: "pointer" }}><LogOut size={14} />Chiqish</button>
       </div>
 
+      {pwOpen && <PasswordDialog onClose={() => setPwOpen(false)} />}
       <div style={{ maxWidth: 560, margin: "0 auto", padding: "16px 16px 40px" }}>
         {!inDetail && <div style={{ marginBottom: 14, display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>{[{ id: "trips", label: "Reyslar" }, { id: "report", label: "Hisobot" }, { id: "requests", label: "So'rovlar", badge: pendingCount }, { id: "drivers", label: "Haydovchilar" }, { id: "base", label: "Asosiy baza" }].map((o) => (
           <button key={o.id} onClick={() => setSection(o.id)} aria-pressed={section === o.id} style={{ padding: "10px 0", borderRadius: 8, border: `1px solid ${section === o.id ? COLORS.amber : COLORS.border}`, background: section === o.id ? COLORS.amber + "1A" : COLORS.panel2, color: section === o.id ? COLORS.amber : COLORS.text, fontWeight: 600, fontSize: 13, cursor: "pointer", fontFamily: "Inter", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>{o.label}{o.badge > 0 && <span data-badge="" style={{ minWidth: 18, height: 18, borderRadius: 9, background: COLORS.red, color: "#fff", fontSize: 10.5, fontWeight: 700, display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "0 5px" }}>{o.badge}</span>}</button>
