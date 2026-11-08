@@ -599,9 +599,257 @@ function useWide(minPx = 900) {
 function loadSideCollapsed() { try { return localStorage.getItem("yolda_office_side") === "1"; } catch { return false; } }
 function saveSideCollapsed(v) { try { localStorage.setItem("yolda_office_side", v ? "1" : "0"); } catch {} }
 
-function App() {
+// ==================== KIRISH (ofis xodimi) va HAYDOVCHI HISOBLARI ====================
+// Ofis xodimi email + parol bilan kiradi (hisob Supabase panelida yaratiladi, unda app_metadata.role = "office" bo'ladi).
+// Haydovchi so'rovlarini tasdiqlash/rad etish va hisoblarni yoqish/o'chirish serverdagi "office-admin" funksiyasi orqali bajariladi
+// (maxfiy kalit ilovada emas, serverda turadi).
+const isOffice = (u) => !!u && !!u.app_metadata && u.app_metadata.role === "office";
+function withTimeout(p, ms) { return Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), ms))]); }
+function prettyPhone(d) { const m = /^998(\d{2})(\d{3})(\d{2})(\d{2})$/.exec(d || ""); return m ? "+998 " + m[1] + " " + m[2] + " " + m[3] + " " + m[4] : d ? "+" + d : "—"; }
+function ago(ts) {
+  const s = Math.max(0, Math.round((Date.now() - new Date(ts).getTime()) / 1000));
+  if (s < 60) return "hozirgina"; if (s < 3600) return Math.floor(s / 60) + " daqiqa oldin"; if (s < 86400) return Math.floor(s / 3600) + " soat oldin";
+  return fmtDate(ts);
+}
+async function callAdmin(body) {
+  try {
+    const { data, error } = await withTimeout(sb.functions.invoke("office-admin", { body }), 25000);
+    if (error) {
+      let p = null; try { p = await error.context.json(); } catch {}
+      if (p && p.message) return { ok: false, code: p.code, message: p.message, other: p.other, other_phone: p.other_phone };
+      return { ok: false, code: "NET", message: "Server bilan aloqa yo'q yoki funksiya ishlamadi. Qayta urinib ko'ring." };
+    }
+    return data && data.ok ? data : { ok: false, code: data && data.code, message: (data && data.message) || "Xatolik" };
+  } catch { return { ok: false, code: "NET", message: "Aloqa yo'q yoki juda sekin. Qayta urinib ko'ring." }; }
+}
+const LogOut = (p) => <Icon {...p}><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></Icon>;
+const InboxIcon = (p) => <Icon {...p}><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5.1L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.5-6.9A2 2 0 0 0 16.8 4H7.2a2 2 0 0 0-1.7 1.1z"/></Icon>;
+const UsersIcon = (p) => <Icon {...p}><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.9"/><path d="M16 3.1a4 4 0 0 1 0 7.8"/></Icon>;
+
+function OfficeLogin({ onIn, note }) {
+  const [email, setEmail] = useState(""); const [password, setPassword] = useState(""); const [busy, setBusy] = useState(false); const [err, setErr] = useState(note || null);
+  const valid = /\S+@\S+/.test(email) && password.length >= 1 && !busy;
+  async function submit() {
+    if (!valid) return;
+    setBusy(true); setErr(null);
+    try {
+      const { data, error } = await withTimeout(sb.auth.signInWithPassword({ email: email.trim(), password }), 15000);
+      if (error) { const m = String(error.message || ""); setErr(/invalid login|invalid credentials/i.test(m) ? "Email yoki parol noto'g'ri." : /fetch|network/i.test(m) ? "Internet aloqasi yo'q. Qayta urinib ko'ring." : "Kirib bo'lmadi: " + m); return; }
+      if (!isOffice(data.user)) { try { await sb.auth.signOut({ scope: "local" }); } catch {} setErr("Bu hisob ofis xodimi hisobi emas."); return; }
+      onIn(data.user);
+    } catch (e) { setErr(e && e.message === "timeout" ? "Internet sekin yoki yo'q. Qayta urinib ko'ring." : "Kirib bo'lmadi: " + (e && e.message)); }
+    finally { setBusy(false); }
+  }
+  const inp = { width: "100%", boxSizing: "border-box", background: COLORS.panel2, border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: "11px 12px", color: COLORS.text, fontFamily: "'Roboto Mono', monospace", fontSize: 15, outline: "none" };
+  const lab = { fontFamily: "Inter", fontSize: 12.5, color: COLORS.muted, fontWeight: 500 };
+  return (
+    <div className="app-shell" style={{ background: COLORS.bg, fontFamily: "Inter", color: COLORS.text, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <style>{FONT_IMPORT}</style>
+      <div style={{ width: "100%", maxWidth: 380, display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, justifyContent: "center", marginBottom: 6 }}>
+          <div style={{ width: 38, height: 38, borderRadius: 9, background: COLORS.amber, display: "flex", alignItems: "center", justifyContent: "center" }}><Truck size={21} color="#1A1300" /></div>
+          <div><div style={{ fontFamily: "Oswald", fontWeight: 700, fontSize: 21, letterSpacing: 0.5 }}>YO'LDA — OFIS</div><div style={{ fontSize: 11.5, color: COLORS.muted, marginTop: -2 }}>xodimlar uchun kirish</div></div>
+        </div>
+        <Panel style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <label style={{ display: "flex", flexDirection: "column", gap: 6 }}><span style={lab}>Email</span><input type="email" autoComplete="username" autoCapitalize="off" autoCorrect="off" value={email} onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} style={inp} /></label>
+          <label style={{ display: "flex", flexDirection: "column", gap: 6 }}><span style={lab}>Parol</span><input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} style={inp} /></label>
+          {err && <div role="alert" style={{ fontSize: 12.5, color: COLORS.red, lineHeight: 1.5 }}>{err}</div>}
+          <button onClick={submit} disabled={!valid} style={{ background: COLORS.amber, color: "#1A1300", border: "none", borderRadius: 9, padding: "12px 18px", fontFamily: "Inter", fontWeight: 600, fontSize: 14, opacity: valid ? 1 : 0.5, cursor: valid ? "pointer" : "not-allowed" }}>{busy ? "Kirilmoqda..." : "KIRISH"}</button>
+        </Panel>
+      </div>
+    </div>
+  );
+}
+
+function SmallBtn({ children, onClick, tone = "ghost", disabled }) {
+  const st = { primary: { background: COLORS.amber, color: "#1A1300", border: "none" }, green: { background: COLORS.green + "22", color: COLORS.green, border: `1px solid ${COLORS.green}66` }, danger: { background: "transparent", color: COLORS.red, border: `1px solid ${COLORS.red}55` }, ghost: { background: "transparent", color: COLORS.text, border: `1px solid ${COLORS.border}` } }[tone];
+  return <button onClick={onClick} disabled={disabled} style={{ ...st, padding: "8px 14px", borderRadius: 8, fontFamily: "Inter", fontWeight: 600, fontSize: 13, opacity: disabled ? 0.5 : 1, cursor: disabled ? "not-allowed" : "pointer" }}>{children}</button>;
+}
+
+function RequestsScreen({ onChanged }) {
+  const [rows, setRows] = useState(null); const [drivers, setDrivers] = useState([]); const [loadErr, setLoadErr] = useState(false);
+  const [busyId, setBusyId] = useState(null); const [notes, setNotes] = useState({}); const [rejecting, setRejecting] = useState(null); const [rejMsg, setRejMsg] = useState("");
+  const setNote = (id, n) => setNotes((m) => ({ ...m, [id]: n }));
+  async function load() {
+    try {
+      // MUHIM: parol (temp_password) ustuni ofisga umuman yuklanmaydi
+      const [a, b] = await Promise.all([
+        sb.from("driver_requests").select("id,first_name,last_name,phone,status,message,created_at,decided_at,delivered_at,driver_id").order("created_at", { ascending: false }).limit(200),
+        sb.from("drivers").select("id,first_name,last_name,phone,auth_user_id,active"),
+      ]);
+      if (a.error || b.error) throw a.error || b.error;
+      setRows(a.data || []); setDrivers(b.data || []); setLoadErr(false);
+    } catch { setLoadErr(true); setRows((r) => r || []); }
+  }
+  useEffect(() => { load(); const iv = setInterval(() => { if (!document.hidden) load(); }, 15000); return () => clearInterval(iv); }, []);
+  async function approve(r, force) {
+    setBusyId(r.id); setNote(r.id, null);
+    const res = await callAdmin({ action: "approve", request_id: r.id, force_link: !!force });
+    setBusyId(null);
+    if (res.ok) { setNote(r.id, { kind: "ok", text: "✓ Tasdiqlandi. Parol haydovchi ilovasining «Xabarlar» bo'limiga yuborildi." }); }
+    else if (res.code === "PHONE_TAKEN" || res.code === "NAME_HAS_OTHER_PHONE") setNote(r.id, { kind: "ask", text: res.message });
+    else setNote(r.id, { kind: "err", text: res.message });
+    await load(); onChanged && onChanged();
+  }
+  async function reject(r) {
+    setBusyId(r.id); setNote(r.id, null);
+    const res = await callAdmin({ action: "reject", request_id: r.id, message: rejMsg });
+    setBusyId(null);
+    if (res.ok) { setRejecting(null); setRejMsg(""); } else setNote(r.id, { kind: "err", text: res.message });
+    await load(); onChanged && onChanged();
+  }
+  const pending = (rows || []).filter((r) => r.status === "pending");
+  const done = (rows || []).filter((r) => r.status !== "pending").slice(0, 40);
+  const hint = (r) => {
+    const out = [];
+    const byPhone = drivers.find((d) => d.phone === r.phone);
+    const sameName = (d) => (d.first_name || "").trim().toLowerCase() === r.first_name.trim().toLowerCase() && (d.last_name || "").trim().toLowerCase() === r.last_name.trim().toLowerCase();
+    if (byPhone) out.push(sameName(byPhone) ? { t: "Ro'yxatda bor haydovchi — tasdiqlansa parol YANGIDAN yaratiladi (parolni unutgan bo'lishi mumkin).", c: COLORS.amber } : { t: `⚠ Bu raqam ${byPhone.first_name} ${byPhone.last_name} ga biriktirilgan.`, c: COLORS.red });
+    else { const n = drivers.filter(sameName); if (n.length) out.push({ t: n.some((d) => d.phone) ? `Shu ismli haydovchi boshqa raqam bilan bor (+${n.find((d) => d.phone).phone}).` : "Ro'yxatda shu ismli haydovchi bor — reyslari saqlanadi.", c: COLORS.amber }); }
+    const dup = pending.filter((x) => x.phone === r.phone && x.id !== r.id).length;
+    if (dup) out.push({ t: `⚠ Shu raqamdan yana ${dup} ta kutilayotgan so'rov bor.`, c: COLORS.amber });
+    return out;
+  };
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div style={{ fontFamily: "Oswald", fontSize: 18, fontWeight: 600 }}>Haydovchi so'rovlari</div>
+        <SmallBtn onClick={load}>Yangilash</SmallBtn>
+      </div>
+      <div style={{ fontSize: 12.5, color: COLORS.muted, lineHeight: 1.55 }}>Haydovchi ilovada ism-familya va telefon yozib so'rov yuboradi. «Tasdiqlash»ni bossangiz parol yaratiladi va haydovchining «Xabarlar» bo'limiga o'zi tushadi — parolni siz ko'rmaysiz va yozib berishingiz shart emas.</div>
+      {loadErr && <Panel style={{ color: COLORS.red, fontSize: 13 }}>Ma'lumotni yuklab bo'lmadi. Internetni tekshirib «Yangilash»ni bosing.</Panel>}
+      {rows === null && <Panel style={{ color: COLORS.muted, fontSize: 13 }}>yuklanmoqda…</Panel>}
+      {rows !== null && pending.length === 0 && <Panel style={{ color: COLORS.muted, fontSize: 13.5, textAlign: "center", padding: "28px 16px" }}>Kutilayotgan so'rov yo'q.</Panel>}
+      {pending.map((r) => (
+        <Panel key={r.id} style={{ display: "flex", flexDirection: "column", gap: 10 }} data-request={r.id}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+            <div><div style={{ fontSize: 15, fontWeight: 600 }}>{r.first_name} {r.last_name}</div><div style={{ fontFamily: "'Roboto Mono', monospace", fontSize: 13.5, color: COLORS.amber, marginTop: 2 }}>{prettyPhone(r.phone)}</div></div>
+            <div style={{ fontSize: 11.5, color: COLORS.muted }}>{ago(r.created_at)}</div>
+          </div>
+          {hint(r).map((h, i) => <div key={i} style={{ fontSize: 12, color: h.c, lineHeight: 1.5 }}>{h.t}</div>)}
+          {notes[r.id] && notes[r.id].kind === "err" && <div role="alert" style={{ fontSize: 12.5, color: COLORS.red }}>{notes[r.id].text}</div>}
+          {notes[r.id] && notes[r.id].kind === "ask" && (
+            <div role="alert" style={{ background: COLORS.amber + "14", border: `1px solid ${COLORS.amber}55`, borderRadius: 8, padding: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+              <div style={{ fontSize: 12.5, color: COLORS.text, lineHeight: 1.5 }}>{notes[r.id].text}</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><SmallBtn tone="primary" disabled={busyId === r.id} onClick={() => approve(r, true)}>Ha, o'sha odam — davom etish</SmallBtn><SmallBtn onClick={() => setNote(r.id, null)}>Yo'q</SmallBtn></div>
+            </div>
+          )}
+          {rejecting === r.id ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <input value={rejMsg} onChange={(e) => setRejMsg(e.target.value)} placeholder="Haydovchiga xabar (ixtiyoriy), masalan: raqam noto'g'ri" maxLength={300} style={{ width: "100%", boxSizing: "border-box", background: COLORS.panel2, border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: "9px 11px", color: COLORS.text, fontFamily: "Inter", fontSize: 13.5, outline: "none" }} />
+              <div style={{ display: "flex", gap: 8 }}><SmallBtn tone="danger" disabled={busyId === r.id} onClick={() => reject(r)}>{busyId === r.id ? "..." : "Rad etishni tasdiqlash"}</SmallBtn><SmallBtn onClick={() => { setRejecting(null); setRejMsg(""); }}>Bekor qilish</SmallBtn></div>
+            </div>
+          ) : (
+            <div style={{ display: "flex", gap: 8 }}><SmallBtn tone="green" disabled={busyId === r.id} onClick={() => approve(r, false)}>{busyId === r.id ? "Yuborilmoqda..." : "Tasdiqlash"}</SmallBtn><SmallBtn tone="danger" disabled={busyId === r.id} onClick={() => { setRejecting(r.id); setRejMsg(""); }}>Rad etish</SmallBtn></div>
+          )}
+        </Panel>
+      ))}
+      {Object.entries(notes).filter(([id, n]) => n && n.kind === "ok" && !pending.some((p) => p.id === id)).map(([id, n]) => <Panel key={id} style={{ color: COLORS.green, fontSize: 13, borderColor: COLORS.green + "55" }}>{n.text}</Panel>)}
+      {done.length > 0 && (
+        <>
+          <div style={{ fontFamily: "Oswald", fontSize: 14, fontWeight: 600, color: COLORS.muted, marginTop: 6 }}>Ko'rib chiqilganlar</div>
+          {done.map((r) => (
+            <div key={r.id} style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "10px 14px", display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+              <div><div style={{ fontSize: 13.5, fontWeight: 600 }}>{r.first_name} {r.last_name}</div><div style={{ fontSize: 11.5, color: COLORS.muted, fontFamily: "'Roboto Mono', monospace" }}>{prettyPhone(r.phone)}</div></div>
+              <div style={{ textAlign: "right", fontSize: 12, lineHeight: 1.5 }}>
+                {r.status === "approved"
+                  ? <><div style={{ color: COLORS.green, fontWeight: 600 }}>Tasdiqlangan</div><div style={{ color: r.delivered_at ? COLORS.green : COLORS.amber }}>{r.delivered_at ? "✓ Haydovchi parolni oldi" : "Haydovchi hali parolni olmadi"}</div></>
+                  : <><div style={{ color: COLORS.red, fontWeight: 600 }}>Rad etilgan</div>{r.message && <div style={{ color: COLORS.muted }}>{r.message}</div>}</>}
+                <div style={{ color: COLORS.muted }}>{ago(r.decided_at || r.created_at)}</div>
+              </div>
+            </div>
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
+
+function DriversScreen() {
+  const [rows, setRows] = useState(null); const [loadErr, setLoadErr] = useState(false); const [q, setQ] = useState("");
+  const [confirmId, setConfirmId] = useState(null); const [busyId, setBusyId] = useState(null); const [err, setErr] = useState({});
+  async function load() {
+    try {
+      const { data, error } = await sb.from("drivers").select("id,first_name,last_name,phone,auth_user_id,active,created_at").order("created_at", { ascending: false });
+      if (error) throw error; setRows(data || []); setLoadErr(false);
+    } catch { setLoadErr(true); setRows((r) => r || []); }
+  }
+  useEffect(() => { load(); }, []);
+  async function setActive(d, active) {
+    setBusyId(d.id); setErr((m) => ({ ...m, [d.id]: null }));
+    const res = await callAdmin({ action: "set_active", driver_id: d.id, active });
+    setBusyId(null);
+    if (res.ok) setConfirmId(null); else setErr((m) => ({ ...m, [d.id]: res.message }));
+    await load();
+  }
+  const qq = q.trim().toLowerCase(), qd = qq.replace(/\D/g, "");
+  const list = (rows || []).filter((d) => !qq || `${d.first_name} ${d.last_name}`.toLowerCase().includes(qq) || (qd.length > 2 && (d.phone || "").includes(qd)));
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div style={{ fontFamily: "Oswald", fontSize: 18, fontWeight: 600 }}>Haydovchilar</div>
+        <SmallBtn onClick={load}>Yangilash</SmallBtn>
+      </div>
+      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ism yoki telefon bo'yicha qidirish" style={{ width: "100%", boxSizing: "border-box", background: COLORS.panel, border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: "10px 12px", color: COLORS.text, fontFamily: "Inter", fontSize: 14, outline: "none" }} />
+      {loadErr && <Panel style={{ color: COLORS.red, fontSize: 13 }}>Ma'lumotni yuklab bo'lmadi. «Yangilash»ni bosing.</Panel>}
+      {rows === null && <Panel style={{ color: COLORS.muted, fontSize: 13 }}>yuklanmoqda…</Panel>}
+      {rows !== null && list.length === 0 && !loadErr && <Panel style={{ color: COLORS.muted, fontSize: 13.5, textAlign: "center", padding: "24px 16px" }}>Haydovchi topilmadi.</Panel>}
+      {list.map((d) => {
+        const off = d.active === false;
+        return (
+          <Panel key={d.id} style={{ display: "flex", flexDirection: "column", gap: 8, opacity: off ? 0.85 : 1 }} data-driver={d.id}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              <div><div style={{ fontSize: 15, fontWeight: 600 }}>{d.first_name} {d.last_name}</div><div style={{ fontFamily: "'Roboto Mono', monospace", fontSize: 13, color: COLORS.muted, marginTop: 2 }}>{prettyPhone(d.phone)}</div></div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: off ? COLORS.red : d.auth_user_id ? COLORS.green : COLORS.muted }}>{off ? "Nofaol" : d.auth_user_id ? "Faol" : "Hisobsiz"}</span>
+                {off ? <SmallBtn tone="green" disabled={busyId === d.id} onClick={() => setActive(d, true)}>Yoqish</SmallBtn>
+                  : d.auth_user_id ? <SmallBtn tone="danger" onClick={() => setConfirmId(confirmId === d.id ? null : d.id)}>O'chirish</SmallBtn> : null}
+              </div>
+            </div>
+            {!d.auth_user_id && !off && <div style={{ fontSize: 11.5, color: COLORS.muted }}>Hali ilovaga kirmagan (so'rov yubormagan). Eski reyslari saqlanadi.</div>}
+            {confirmId === d.id && (
+              <div role="alert" style={{ background: COLORS.red + "12", border: `1px solid ${COLORS.red}44`, borderRadius: 8, padding: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ fontSize: 12.5, lineHeight: 1.5 }}>{d.first_name} {d.last_name} ilovaga kira olmaydi. Reys ma'lumotlari saqlanadi, keyinroq qayta yoqish mumkin.</div>
+                <div style={{ display: "flex", gap: 8 }}><SmallBtn tone="danger" disabled={busyId === d.id} onClick={() => setActive(d, false)}>{busyId === d.id ? "..." : "Ha, o'chirish"}</SmallBtn><SmallBtn onClick={() => setConfirmId(null)}>Bekor qilish</SmallBtn></div>
+              </div>
+            )}
+            {err[d.id] && <div role="alert" style={{ fontSize: 12.5, color: COLORS.red }}>{err[d.id]}</div>}
+          </Panel>
+        );
+      })}
+    </div>
+  );
+}
+
+// Kirish eshigi: sessiya bor va rol "office" bo'lsagina ilova ochiladi
+function Root() {
+  const [st, setSt] = useState({ phase: "loading", user: null, note: null });
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const { data } = await withTimeout(sb.auth.getSession(), 8000);
+        const s = data && data.session;
+        if (!alive) return;
+        if (s && isOffice(s.user)) setSt({ phase: "in", user: s.user, note: null });
+        else { if (s) { try { await sb.auth.signOut({ scope: "local" }); } catch {} } setSt({ phase: "out", user: null, note: s ? "Bu hisob ofis xodimi hisobi emas." : null }); }
+      } catch { if (alive) setSt({ phase: "out", user: null, note: null }); }
+    })();
+    const { data: sub } = sb.auth.onAuthStateChange((ev) => { if (ev === "SIGNED_OUT" && alive) setSt({ phase: "out", user: null, note: null }); });
+    return () => { alive = false; try { sub.subscription.unsubscribe(); } catch {} };
+  }, []);
+  async function logout() { try { await sb.auth.signOut({ scope: "local" }); } catch {} setSt({ phase: "out", user: null, note: null }); }
+  if (st.phase === "loading") return <div className="app-shell" style={{ background: COLORS.bg, display: "flex", alignItems: "center", justifyContent: "center", color: COLORS.muted, fontFamily: "Inter" }}><style>{FONT_IMPORT}</style>yuklanmoqda...</div>;
+  if (st.phase === "out") return <OfficeLogin note={st.note} onIn={(user) => setSt({ phase: "in", user, note: null })} />;
+  return <App user={st.user} onLogout={logout} />;
+}
+
+function App({ user, onLogout }) {
   const wide = useWide();
-  const [section, setSection] = useState("trips"); // trips | report | base
+  const [section, setSection] = useState("trips"); // trips | report | requests | drivers | base
+  const [pendingCount, setPendingCount] = useState(0); // kutilayotgan haydovchi so'rovlari soni (menyuda belgi)
+  async function loadPending() { try { const { data, error } = await sb.from("driver_requests").select("id").eq("status", "pending"); if (!error && data) setPendingCount(data.length); } catch {} }
+  useEffect(() => { loadPending(); const iv = setInterval(() => { if (!document.hidden) loadPending(); }, 30000); return () => clearInterval(iv); }, []);
   const [view, setView] = useState("list"); // (telefon) list | detail
   const [trips, setTrips] = useState(null);
   const [kmMap, setKmMap] = useState(null); // driver_id -> shu oydagi yuk bilan / pustoy km
@@ -636,13 +884,13 @@ function App() {
 
   // ---------- Kompyuter ----------
   if (wide) {
-    const navItem = (id, label, Ic) => {
+    const navItem = (id, label, Ic, badge) => {
       const active = section === id;
       return (
-        <button key={id} className="menu-btn hov" aria-label={label} title={label} aria-current={active ? "page" : undefined}
+        <button key={id} className="menu-btn hov" aria-label={badge ? label + " (" + badge + ")" : label} title={label} aria-current={active ? "page" : undefined}
           onClick={() => { setSection(id); if (id === "trips" && collapsed) setCollapsed(false); }}
           style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", padding: collapsed ? "11px 0" : "11px 12px", justifyContent: collapsed ? "center" : "flex-start", borderRadius: 8, border: "none", background: active ? COLORS.amber + "1F" : "transparent", color: active ? COLORS.amber : COLORS.text, fontFamily: "Inter", fontWeight: 600, fontSize: 14, cursor: "pointer" }}>
-          <Ic size={19} />{!collapsed && <span>{label}</span>}
+          <span style={{ position: "relative", display: "flex" }}><Ic size={19} />{badge > 0 && collapsed && <span style={{ position: "absolute", top: -5, right: -7, minWidth: 14, height: 14, borderRadius: 7, background: COLORS.red, color: "#fff", fontSize: 9.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 3px" }}>{badge}</span>}</span>{!collapsed && <span style={{ flex: 1, textAlign: "left" }}>{label}</span>}{!collapsed && badge > 0 && <span data-badge="" style={{ minWidth: 20, height: 20, borderRadius: 10, background: COLORS.red, color: "#fff", fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 6px" }}>{badge}</span>}
         </button>
       );
     };
@@ -664,6 +912,8 @@ function App() {
           <nav style={{ display: "flex", flexDirection: "column", gap: 4, padding: "4px 10px 10px" }}>
             {navItem("trips", "Reyslar", ListIcon)}
             {navItem("report", "Hisobot", ReportIcon)}
+            {navItem("requests", "So'rovlar", InboxIcon, pendingCount)}
+            {navItem("drivers", "Haydovchilar", UsersIcon)}
             {navItem("base", "Asosiy baza", Database)}
           </nav>
           {!collapsed && section === "trips" && (
@@ -672,10 +922,15 @@ function App() {
                 onOpen={setSelectedId} onRefresh={() => { loadList(); setTick((n) => n + 1); }} />
             </div>
           )}
+          {!(section === "trips" && !collapsed) && <div style={{ flex: 1 }} />}
+          <div style={{ padding: collapsed ? "10px 0" : "10px 12px", borderTop: `1px solid ${COLORS.border}`, display: "flex", flexDirection: collapsed ? "column" : "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+            {!collapsed && <div style={{ minWidth: 0, fontSize: 11.5, color: COLORS.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={user && user.email}>{user && user.email}</div>}
+            <button aria-label="Chiqish" title="Chiqish" className="hov" onClick={onLogout} style={{ flex: "none", background: "transparent", border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: collapsed ? "7px" : "7px 10px", color: COLORS.muted, display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter", fontWeight: 600, fontSize: 12, cursor: "pointer" }}><LogOut size={14} />{!collapsed && "Chiqish"}</button>
+          </div>
         </aside>
         <main className="thin-scroll" style={{ flex: 1, minWidth: 0, overflowY: "auto" }}>
           <div style={{ maxWidth: 820, margin: "0 auto", padding: "22px 28px 48px" }}>
-            {section === "base" ? <BaseScreen /> : section === "report" ? <ReportScreen /> : selectedId ? <TripDetail key={selectedId + ":" + tick} tripId={selectedId} /> : (
+            {section === "base" ? <BaseScreen /> : section === "report" ? <ReportScreen /> : section === "requests" ? <RequestsScreen onChanged={loadPending} /> : section === "drivers" ? <DriversScreen /> : selectedId ? <TripDetail key={selectedId + ":" + tick} tripId={selectedId} /> : (
               <Panel style={{ textAlign: "center", padding: "56px 20px", color: COLORS.muted, fontSize: 14 }}>
                 {collapsed ? <>Reyslar ro'yxatini ochish uchun chapdagi <b style={{ color: COLORS.text }}>Reyslar</b> tugmasini bosing.</> : <>Chap tomondagi ro'yxatdan reysni tanlang.</>}
               </Panel>
@@ -696,12 +951,15 @@ function App() {
           <button aria-label="Orqaga" onClick={() => { setView("list"); setSelectedId(null); loadList(); }} style={{ background: COLORS.panel2, border: "none", borderRadius: 8, width: 34, height: 34, color: COLORS.text, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}><ChevronLeft size={18} /></button>
         )}
         {logo}
-        <div><div style={{ fontFamily: "Oswald", fontWeight: 700, fontSize: 19, letterSpacing: 0.5 }}>YO'LDA — OFIS</div><div style={{ fontSize: 11, color: COLORS.muted, marginTop: -2 }}>barcha haydovchilar va reyslar</div></div>
+        <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontFamily: "Oswald", fontWeight: 700, fontSize: 19, letterSpacing: 0.5 }}>YO'LDA — OFIS</div><div style={{ fontSize: 11, color: COLORS.muted, marginTop: -2 }}>barcha haydovchilar va reyslar</div></div>
+        <button aria-label="Chiqish" onClick={onLogout} style={{ flex: "none", background: "transparent", border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: "7px 10px", color: COLORS.muted, display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter", fontWeight: 600, fontSize: 12, cursor: "pointer" }}><LogOut size={14} />Chiqish</button>
       </div>
 
       <div style={{ maxWidth: 560, margin: "0 auto", padding: "16px 16px 40px" }}>
-        {!inDetail && <div style={{ marginBottom: 14 }}><SegmentedChoice options={[{ id: "trips", label: "Reyslar" }, { id: "report", label: "Hisobot" }, { id: "base", label: "Asosiy baza" }]} value={section} onChange={setSection} /></div>}
-        {section === "base" ? <BaseScreen /> : section === "report" ? <ReportScreen /> : view === "list" ? (
+        {!inDetail && <div style={{ marginBottom: 14, display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>{[{ id: "trips", label: "Reyslar" }, { id: "report", label: "Hisobot" }, { id: "requests", label: "So'rovlar", badge: pendingCount }, { id: "drivers", label: "Haydovchilar" }, { id: "base", label: "Asosiy baza" }].map((o) => (
+          <button key={o.id} onClick={() => setSection(o.id)} aria-pressed={section === o.id} style={{ padding: "10px 0", borderRadius: 8, border: `1px solid ${section === o.id ? COLORS.amber : COLORS.border}`, background: section === o.id ? COLORS.amber + "1A" : COLORS.panel2, color: section === o.id ? COLORS.amber : COLORS.text, fontWeight: 600, fontSize: 13, cursor: "pointer", fontFamily: "Inter", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>{o.label}{o.badge > 0 && <span data-badge="" style={{ minWidth: 18, height: 18, borderRadius: 9, background: COLORS.red, color: "#fff", fontSize: 10.5, fontWeight: 700, display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "0 5px" }}>{o.badge}</span>}</button>
+        ))}</div>}
+        {section === "base" ? <BaseScreen /> : section === "report" ? <ReportScreen /> : section === "requests" ? <RequestsScreen onChanged={loadPending} /> : section === "drivers" ? <DriversScreen /> : view === "list" ? (
           <TripsList kmMap={kmMap} trips={filtered} loading={trips === null} listTab={listTab} setListTab={setListTab} query={query} setQuery={setQuery} onOpen={(id) => { setSelectedId(id); setView("detail"); }} />
         ) : (
           <TripDetail tripId={selectedId} />
@@ -1235,7 +1493,7 @@ function TripDetail({ tripId }) {
   );
 }
 
-(window.__bootGate || Promise.resolve()).then(function () { ReactDOM.createRoot(document.getElementById("root")).render(<App />); });
+(window.__bootGate || Promise.resolve()).then(function () { ReactDOM.createRoot(document.getElementById("root")).render(<Root />); });
 </script>
 <script>
 // Ilovani telefonga o'rnatish imkoniyati uchun (hech narsani keshlamaydi)
