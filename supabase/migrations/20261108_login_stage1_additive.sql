@@ -60,7 +60,6 @@ begin
   if length(v_first) < 1 or length(v_first) > 60 or length(v_last) < 1 or length(v_last) > 60 then raise exception 'BAD_NAME'; end if;
   if length(v_phone) < 10 or length(v_phone) > 15 then raise exception 'BAD_PHONE'; end if;
   v_hash := encode(sha256(convert_to(p_token, 'UTF8')), 'hex');
-  -- shu qurilmaning eski (kutilayotgan yoki rad etilgan) so'rovi yangisi bilan almashtiriladi
   delete from public.driver_requests where token_hash = v_hash and status in ('pending', 'rejected');
   if exists (select 1 from public.driver_requests where token_hash = v_hash) then raise exception 'ALREADY_USED'; end if;
   if (select count(*) from public.driver_requests where phone = v_phone and status = 'pending') >= 3 then raise exception 'TOO_MANY'; end if;
